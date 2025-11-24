@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ml_sidecar"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "hdbscan",
+    "requests",
+    "pyyaml",
+    "joblib"
+]
+
+[tool.setuptools]
+packages = ["ml_sidecar"]

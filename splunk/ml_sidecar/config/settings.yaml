@@ -1,0 +1,35 @@
+# config/settings.yaml
+general:
+  model_dir: "./models"
+  model_name: "auth_kmeans_v1"
+  drift_threshold: 0.05
+
+ingestion:
+  source_type: "splunk_rest"
+  query: 'index=generic_index source="*20251120-win-synth-auth-as-json2.log"'
+  earliest: "-365d"
+  latest: "-48h"
+  # latest: "now"
+  splunk:
+    base_url: "https://127.0.0.1:8089"
+    auth_token: "eyJraWQiOiJzcGx1bmsuc2VjcmV0IiwiYWxnIjoiSFM1MTIiLCJ2ZXIiOiJ2MiIsInR0eXAiOiJzdGF0aWMifQ.eyJpc3MiOiJhZG1pbiBmcm9tIE95a3UubG9jYWwiLCJzdWIiOiJhZG1pbiIsImF1ZCI6Im1sLXRlc3QtNC1neWsiLCJpZHAiOiJTcGx1bmsiLCJqdGkiOiJmYzM2YmMzZjgwNjhkMjJmY2Y3ZWY0ZGFhMzhlMGI0ZTNmYmYxM2E3Y2ViOWQ2NTMzMzkzYjk3YzcwOGY2ZGM3IiwiaWF0IjoxNzYzNDUzNTk3LCJleHAiOjE3NjYwNDU1OTcsIm5iciI6MTc2MzQ1MzU5N30.PGV-96PAjSm3BnAuZe076Tg901TJVK2mdckifqD-bNdOyqA3y_jVfi_eOP5bnWMsZ_ZueXl0RRQsCRkNxbEt8w"
+    
+modeling:
+  algorithm: "kmeans"
+  k_candidates: [6, 8, 10, 12, 14]
+  random_state: 42
+  drift_threshold: 0.05
+
+output:
+  writers:
+    - "file"
+    - "splunk_kvstore"
+  file:
+    path: "./data/model_outputs.jsonl"
+
+  splunk_kvstore:
+    enabled: true
+    base_url: "https://127.0.0.1:8089"
+    auth_token: "eyJraWQiOiJzcGx1bmsuc2VjcmV0IiwiYWxnIjoiSFM1MTIiLCJ2ZXIiOiJ2MiIsInR0eXAiOiJzdGF0aWMifQ.eyJpc3MiOiJhZG1pbiBmcm9tIE95a3UubG9jYWwiLCJzdWIiOiJhZG1pbiIsImF1ZCI6Im1sLXRlc3QtNC1neWsiLCJpZHAiOiJTcGx1bmsiLCJqdGkiOiJmYzM2YmMzZjgwNjhkMjJmY2Y3ZWY0ZGFhMzhlMGI0ZTNmYmYxM2E3Y2ViOWQ2NTMzMzkzYjk3YzcwOGY2ZGM3IiwiaWF0IjoxNzYzNDUzNTk3LCJleHAiOjE3NjYwNDU1OTcsIm5iciI6MTc2MzQ1MzU5N30.PGV-96PAjSm3BnAuZe076Tg901TJVK2mdckifqD-bNdOyqA3y_jVfi_eOP5bnWMsZ_ZueXl0RRQsCRkNxbEt8w"
+    app: "ml_sidecar_app"
+    collection: "auth_clusters"
