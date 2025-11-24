@@ -1,0 +1,10 @@
+/browse/search
+/browse/tracks
+/browse/artists
+/sync/createplaylist
+/playhistory/uploadhistory
+/auth
+/dashboard/user=none?view=true
+/dashboard/user=admin?view=true
+/home/mylist
+/otherurl/path/morepath

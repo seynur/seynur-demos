@@ -1,0 +1,16 @@
+filebeat.prospectors:
+
+filebeat.modules:
+#- module: system
+- module: nginx
+  access:
+    #var.paths: ["/var/log/nginx/access.log*"]
+    var.paths: ["/logs/example_access.log*"]
+  error:
+    var.paths: ["/var/log/nginx/error.log*"]
+
+#output.logstash:
+#  hosts: ["localhost:5044"]
+
+output.elasticsearch:
+  hosts: ["http://localhost:9200"]

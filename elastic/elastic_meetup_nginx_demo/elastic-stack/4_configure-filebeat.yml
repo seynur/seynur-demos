@@ -1,0 +1,13 @@
+---
+
+- hosts: localhost
+  become: true
+
+
+  tasks:
+
+  - name: Change the Filebeat configuration
+    template: src=templates/filebeat.yml dest=/etc/filebeat/filebeat.yml
+
+  - name: Start Filebeat
+    service: name=filebeat state=restarted

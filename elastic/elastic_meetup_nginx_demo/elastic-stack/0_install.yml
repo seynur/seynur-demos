@@ -1,0 +1,104 @@
+---
+
+- hosts: all
+  become: true
+  vars_files:
+    - vars.yml
+
+
+  vars:
+    elastic_download: https://artifacts.elastic.co
+
+
+  tasks:
+
+  - name: Get the platform (i386 or amd64) of the virtual machine
+    command: dpkg --print-architecture
+    register: print_architecture
+
+  - name: And set the actual platform value as a variable
+    set_fact:
+      platform: "{{ print_architecture.stdout }}"
+
+
+  - name: Get rid of Chef and Puppet to save some resources and autoremove unused packages to save some disk space
+    apt: name={{ item }} state=absent autoremove=yes
+    with_items:
+      - chef
+      - puppet
+
+  - name: Install unzip for unpacking files later on
+    apt: name=unzip state=latest
+
+  - name: Install Vim, because plain Vi is driving me crazy
+    apt: name=vim state=latest
+
+  - name: Install cURL, which is missing on the Bento image
+    apt: name=curl state=latest
+
+  - name: Install NTP to avoid time drift inside the VM
+    apt: name={{ item }} state=latest
+    with_items:
+      - ntp
+      - ntpdate
+
+  - name: Install the JRE
+    apt: name=openjdk-8-jre-headless state=latest update_cache=yes install_recommends=no
+
+
+  - name: Install pip to get current Python dependencies
+    apt: name=python-pip state=latest
+
+
+  - name: Get Elasticsearch
+    get_url:
+      url={{ elastic_download }}/downloads/elasticsearch/elasticsearch-{{ elastic_version }}.deb
+      dest=/opt/elasticsearch.deb
+
+  - name: Install Elasticsearch
+    apt: deb=/opt/elasticsearch.deb
+
+  - name: Make sure Elasticsearch autostarts, but is stopped until it is properly configured
+    service: name=elasticsearch enabled=yes state=stopped
+
+
+  - name: Get Logstash
+    get_url:
+      url={{ elastic_download }}/downloads/logstash/logstash-{{ elastic_version }}.deb
+      dest=/opt/logstash.deb
+
+  - name: Install Logstash
+    apt: deb=/opt/logstash.deb
+
+  - name: Make sure Logstash autostarts, but is stopped until it is properly configured
+    service: name=logstash enabled=yes state=stopped
+
+  - name: Get Filebeat
+    get_url:
+      url={{ elastic_download }}/downloads/beats/filebeat/filebeat-{{ elastic_version }}-{{ platform }}.deb
+      dest=/opt/filebeat.deb
+
+  - name: Install Filebeat
+    apt: deb=/opt/filebeat.deb
+
+  - name: Make sure Filebeat autostarts, but is stopped until it is properly configured
+    service: name=filebeat enabled=yes state=stopped
+
+  - name: Get Kibana
+    get_url:
+      url={{ elastic_download }}/downloads/kibana/kibana-{{ elastic_version }}-{{ platform }}.deb
+      dest=/opt/kibana.deb
+
+  - name: Install Kibana
+    apt: deb=/opt/kibana.deb
+
+  - name: Make sure Kibana autostarts, but is stopped until it is properly configured
+    service: name=kibana enabled=yes state=stopped
+
+
+  - name: Make the shell scripts executable
+    file: path=/elastic-stack/{{ item }} mode=0755
+    with_items:
+      - all.sh
+      - fix-time.sh
+
