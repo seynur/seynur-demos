@@ -1,0 +1,548 @@
+
+<dashboard version="2" theme="dark">
+    <label>Authentication ML Anomaly Detection Tests</label>
+    <description></description>
+    <definition><![CDATA[
+{
+	"title": "Authentication ML Anomaly Detection Test",
+	"description": "",
+	"inputs": {
+		"input_global_time": {
+			"options": {
+				"defaultValue": "0,",
+				"token": "global_time"
+			},
+			"title": "Global Time Range",
+			"type": "input.timerange",
+			"containerOptions": {
+				"visibility": {
+					"hideInViewMode": true
+				}
+			}
+		},
+		"input_users": {
+			"options": {
+				"items": [
+					{
+						"label": "All",
+						"value": "*"
+					}
+				],
+				"token": "input_users",
+				"defaultValue": "*"
+			},
+			"title": "Users",
+			"type": "input.dropdown",
+			"dataSources": {
+				"primary": "ds_zqvIRHbx"
+			}
+		},
+		"input_clusters": {
+			"options": {
+				"items": [
+					{
+						"label": "All",
+						"value": "*"
+					}
+				],
+				"defaultValue": "*",
+				"token": "input_clusters"
+			},
+			"title": "Clusters",
+			"type": "input.dropdown",
+			"dataSources": {
+				"primary": "ds_JOP24UuG"
+			}
+		},
+		"input_anomaly_score": {
+			"options": {
+				"defaultValue": 0,
+				"token": "input_anomaly_score"
+			},
+			"title": "Anomaly Score",
+			"type": "input.number"
+		}
+	},
+	"defaults": {
+		"dataSources": {
+			"ds.search": {
+				"options": {
+					"queryParameters": {
+						"earliest": "$global_time.earliest$",
+						"latest": "$global_time.latest$"
+					}
+				}
+			}
+		}
+	},
+	"visualizations": {
+		"viz_ht8CsTaX": {
+			"dataSources": {
+				"primary": "ds_3VqNWSny"
+			},
+			"options": {
+				"count": 20,
+				"dataOverlayMode": "none",
+				"drilldown": "none",
+				"showInternalFields": false,
+				"showRowNumbers": false,
+				"tableFormat": {
+					"headerAlign": "right"
+				}
+			},
+			"title": "Total User Authentication Events by \"$input_users$\"",
+			"type": "splunk.table"
+		},
+		"viz_yePQ6tpv": {
+			"type": "splunk.line",
+			"dataSources": {
+				"primary": "ds_CQi0GEiH"
+			},
+			"title": "Cluster Patterns by \"$input_users$\""
+		},
+		"viz_AxvXZPCY": {
+			"type": "splunk.line",
+			"dataSources": {
+				"primary": "ds_hByv3eiP"
+			},
+			"options": {
+				"showLineSmoothing": true,
+				"lineWidth": 3,
+				"seriesColorsByField": {
+					"0": "#53a051",
+					"1": "#ef0000"
+				},
+				"overlayFields": []
+			},
+			"title": "Outlier Patterns by \"$input_users$\""
+		},
+		"viz_LNQIYvQn": {
+			"type": "splunk.table",
+			"dataSources": {
+				"primary": "ds_WtZDS3wY"
+			},
+			"title": "Outlier Behaviours by \"$input_users$” - Table"
+		},
+		"viz_alVmbo3j": {
+			"type": "splunk.singlevalue",
+			"dataSources": {
+				"primary": "ds_Eohom57i"
+			},
+			"title": "Dominant Cluster ID for “$input_users$\""
+		},
+		"viz_ph3YLkrM": {
+			"type": "splunk.line",
+			"dataSources": {
+				"primary": "ds_d8ybX9uY"
+			},
+			"containerOptions": {
+				"visibility": {}
+			},
+			"showProgressBar": false,
+			"showLastUpdated": false,
+			"title": "Signature Frequency for “$input_users$\"",
+			"options": {
+				"nullValueDisplay": "connect"
+			}
+		},
+		"viz_8DN1f1EQ": {
+			"type": "splunk.pie",
+			"dataSources": {
+				"primary": "ds_O9QtAMfk"
+			},
+			"title": "Cluster Distribution for “$input_users$\""
+		},
+		"viz_tXQoW2XI": {
+			"type": "splunk.column",
+			"options": {},
+			"dataSources": {
+				"primary": "ds_kB9T94eQ_ds_3VqNWSny"
+			},
+			"context": {},
+			"containerOptions": {},
+			"showProgressBar": false,
+			"showLastUpdated": false
+		},
+		"viz_ZS7dhe9o": {
+			"type": "splunk.table",
+			"options": {},
+			"dataSources": {
+				"primary": "ds_pa93zNGl"
+			}
+		},
+		"viz_c4aWsg7s": {
+			"type": "splunk.table",
+			"dataSources": {
+				"primary": "ds_fonzT5q1"
+			},
+			"options": {},
+			"containerOptions": {},
+			"showProgressBar": false,
+			"showLastUpdated": false,
+			"context": {}
+		},
+		"viz_R7V7pBMj": {
+			"type": "splunk.bubble",
+			"options": {
+				"size": "> primary | seriesByName('avg_score')",
+				"y": "> primary | seriesByName('cnt')",
+				"x": "> primary | seriesByName('cluster_id')",
+				"category": "> primary | seriesByName('avg_score')"
+			},
+			"dataSources": {
+				"primary": "ds_bZmz6STX"
+			},
+			"containerOptions": {
+				"visibility": {}
+			},
+			"showProgressBar": false,
+			"showLastUpdated": false,
+			"title": "Anomaly Distribution by Cluster"
+		},
+		"viz_L1bBJIpx": {
+			"type": "splunk.table",
+			"dataSources": {
+				"primary": "ds_DmYzCinQ"
+			},
+			"title": "Outlier Table (Risk Sorted)"
+		},
+		"viz_KpKwQmue": {
+			"type": "splunk.area",
+			"dataSources": {
+				"primary": "ds_CMUQcvQn"
+			},
+			"title": "High-Risk Activity Timeline",
+			"options": {},
+			"context": {},
+			"containerOptions": {},
+			"showProgressBar": false,
+			"showLastUpdated": false
+		},
+		"viz_URlTBoR7": {
+			"type": "splunk.table",
+			"dataSources": {
+				"primary": "ds_i3H4AfIW"
+			},
+			"title": "Shannon Entropy by cluster id and signature",
+			"description": "Shannon Entropy: H = Σ (-p * log(p))  • p = signature rate in the cluster • log(p) → signature's uniqueness • p*log(p) → signature information rate"
+		}
+	},
+	"dataSources": {
+		"ds_zqvIRHbx": {
+			"name": "User Authentication Profiles - Table search",
+			"options": {
+				"query": "| inputlookup auth_user_profiles_lookup\n| dedup user\n| fields user",
+				"queryParameters": {
+					"earliest": "0"
+				},
+				"enableSmartSources": true
+			},
+			"type": "ds.search"
+		},
+		"ds_3VqNWSny": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search user=\"$input_users$\" cluster_id = \"$input_clusters$\"\n| eval _time = strptime(TimeCreated, \"%Y-%m-%dT%H:%M:%S.%6NZ\")\n| fields - TimeCreated",
+				"queryParameters": {
+					"earliest": "$global_time.earliest$",
+					"latest": "$global_time.latest$"
+				}
+			},
+			"name": "Total Authentication Events by Users"
+		},
+		"ds_JOP24UuG": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_cluster_profiles_lookup\n| dedup cluster_id\n| fields cluster_id"
+			},
+			"name": "User Authentication Cluster Profiles - Table search"
+		},
+		"ds_CQi0GEiH": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search user=\"$input_users$\" cluster_id=\"$input_clusters$\"\n| eval _time = strptime(TimeCreated, \"%Y-%m-%dT%H:%M:%S.%6NZ\")\n| timechart count by cluster_id"
+			},
+			"name": "Cluster Patterns by User - timechart"
+		},
+		"ds_hByv3eiP": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search user=\"$input_users$\"\n| eval _time = strptime(TimeCreated, \"%Y-%m-%dT%H:%M:%S.%6NZ\")\n| timechart count by behavior_outlier"
+			},
+			"name": "Behaviour Outliers by User - timechart"
+		},
+		"ds_WtZDS3wY": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search user=\"$input_users$\"\n| eval _time = strptime(TimeCreated, \"%Y-%m-%dT%H:%M:%S.%6NZ\")\n| eventstats count as behavior_outlier_counts values(signature_id) as signature_ids values(action) as actions by behavior_outlier\n| eventstats count by user\n| eventstats count as srcs by src\n| eventstats count as dests by dest\n| eval outlier_rate=behavior_outlier_counts/count\n| dedup outlier_rate,behavior_outlier\n| fields user, srcs, dests, outlier_rate, behavior_outlier, signature_ids, actions\n| fields - _key"
+			},
+			"name": "Outlier Patterns by User - Table"
+		},
+		"ds_kB9T94eQ_ds_3VqNWSny": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_cluster_profiles_lookup \n| search cluster_id=\"$input_clusters$\"\n| table cluster_id, event_count",
+				"queryParameters": {}
+			},
+			"name": "Total Event Count by cluster id"
+		},
+		"ds_d8ybX9uY": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search user=\"$input_users$\" cluster_id = \"$input_clusters$\"\n| eval _time = strptime(TimeCreated, \"%Y-%m-%dT%H:%M:%S.%QZ\")\n| timechart count BY signature_id"
+			},
+			"name": "Signature Freaquency per User - chart"
+		},
+		"ds_Eohom57i": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_user_profiles_lookup\n| search user=\"$input_users$\"\n| fields dominant_cluster"
+			},
+			"name": "Dominant Cluster ID per User"
+		},
+		"ds_O9QtAMfk": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search user=\"$input_users$\"\n| eval _time = strptime(TimeCreated, \"%Y-%m-%dT%H:%M:%S.%QZ\")\n| stats count BY cluster_id"
+			},
+			"name": "Cluster Distribution for User - piechart"
+		},
+		"ds_pa93zNGl": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_cluster_profiles_lookup\n| search cluster_id = \"$input_clusters$\"\n| fields - _key, label"
+			},
+			"name": "auth_cluster_profiles_lookup table"
+		},
+		"ds_fonzT5q1": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search cluster_id=$input_clusters$\n| stats count BY signature action"
+			},
+			"name": "signature distribution"
+		},
+		"ds_bZmz6STX": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search final_anomaly_score > $input_anomaly_score$\n| stats avg(final_anomaly_score) AS avg_score count AS cnt BY cluster_id\n| eval avg_score = round(avg_score, 5)"
+			},
+			"name": "Anomaly Distribution by Cluster"
+		},
+		"ds_DmYzCinQ": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search final_anomaly_score > $input_anomaly_score$ user=\"$input_users$\"\n| eval _time=strptime(TimeCreated,\"%Y-%m-%dT%H:%M:%S.%QZ\")\n| table _time user src dest signature cluster_id final_anomaly_score behavior_outlier\n| sort - final_anomaly_score"
+			},
+			"name": "Outlier Table"
+		},
+		"ds_CMUQcvQn": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup\n| search final_anomaly_score>0.7 user=\"$input_users$\"\n| eval _time=strptime(TimeCreated,\"%Y-%m-%dT%H:%M:%S.%QZ\")\n| timechart span=1h count BY user"
+			},
+			"name": "High-Risk Activity Timeline"
+		},
+		"ds_i3H4AfIW": {
+			"type": "ds.search",
+			"options": {
+				"query": "| inputlookup auth_events_lookup \n| search cluster_id= $input_clusters$\n| stats count BY signature cluster_id\n| eventstats sum(count) AS total by cluster_id\n| eval p=count/total, log_p = -1 * p * log(p)\n| eventstats sum(log_p) AS entropy by signature cluster_id\n| sort cluster_id, entropy"
+			},
+			"name": "signature entropy"
+		}
+	},
+	"layout": {
+		"globalInputs": [
+			"input_global_time",
+			"input_users",
+			"input_clusters",
+			"input_anomaly_score"
+		],
+		"layoutDefinitions": {
+			"layout_1": {
+				"options": {
+					"height": 960,
+					"width": 1440
+				},
+				"structure": [
+					{
+						"item": "viz_yePQ6tpv",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 0,
+							"w": 932,
+							"h": 393
+						}
+					},
+					{
+						"item": "viz_ht8CsTaX",
+						"position": {
+							"x": 0,
+							"y": 393,
+							"w": 1440,
+							"h": 456
+						},
+						"type": "block"
+					},
+					{
+						"item": "viz_AxvXZPCY",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 849,
+							"w": 720,
+							"h": 357
+						}
+					},
+					{
+						"item": "viz_ph3YLkrM",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 1206,
+							"w": 1440,
+							"h": 335
+						}
+					},
+					{
+						"item": "viz_LNQIYvQn",
+						"type": "block",
+						"position": {
+							"x": 720,
+							"y": 849,
+							"w": 720,
+							"h": 357
+						}
+					},
+					{
+						"item": "viz_8DN1f1EQ",
+						"type": "block",
+						"position": {
+							"x": 932,
+							"y": 0,
+							"w": 310,
+							"h": 393
+						}
+					},
+					{
+						"item": "viz_alVmbo3j",
+						"type": "block",
+						"position": {
+							"x": 1242,
+							"y": 0,
+							"w": 198,
+							"h": 393
+						}
+					}
+				],
+				"type": "grid"
+			},
+			"layout_DB39wyo2": {
+				"type": "grid",
+				"structure": [
+					{
+						"item": "viz_tXQoW2XI",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 0,
+							"w": 1200,
+							"h": 400
+						}
+					},
+					{
+						"item": "viz_ZS7dhe9o",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 400,
+							"w": 1200,
+							"h": 400
+						}
+					},
+					{
+						"item": "viz_c4aWsg7s",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 800,
+							"w": 1200,
+							"h": 400
+						}
+					},
+					{
+						"item": "viz_URlTBoR7",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 1200,
+							"w": 1200,
+							"h": 400
+						}
+					}
+				]
+			},
+			"layout_ru9Jdyau": {
+				"type": "grid",
+				"structure": [
+					{
+						"item": "viz_R7V7pBMj",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 0,
+							"w": 1200,
+							"h": 400
+						}
+					},
+					{
+						"item": "viz_L1bBJIpx",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 400,
+							"w": 1200,
+							"h": 400
+						}
+					},
+					{
+						"item": "viz_KpKwQmue",
+						"type": "block",
+						"position": {
+							"x": 0,
+							"y": 800,
+							"w": 1200,
+							"h": 400
+						}
+					}
+				]
+			}
+		},
+		"options": {},
+		"tabs": {
+			"items": [
+				{
+					"label": "USER BEHAVIOR OVERVIEW PANEL",
+					"layoutId": "layout_1"
+				},
+				{
+					"layoutId": "layout_DB39wyo2",
+					"label": "CLUSTER ANALYTICS PANEL"
+				},
+				{
+					"layoutId": "layout_ru9Jdyau",
+					"label": "ANOMALY EXPLORER PANEL"
+				}
+			]
+		}
+	}
+}
+    ]]></definition>
+    <meta type="hiddenElements"><![CDATA[
+{
+	"hideEdit": false,
+	"hideOpenInSearch": false,
+	"hideExport": false
+}
+    ]]></meta>
+</dashboard>

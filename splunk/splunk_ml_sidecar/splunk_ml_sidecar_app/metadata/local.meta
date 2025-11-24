@@ -1,0 +1,12 @@
+[]
+access = read : [ * ], write : [ * ]
+export = system
+version = 9.4.3
+modtime = 1763567128.611687000
+
+[transforms/auth_clusters]
+access = read : [ * ], write : [ admin ]
+export = system
+owner = admin
+version = 9.4.3
+modtime = 1763567392.432093000

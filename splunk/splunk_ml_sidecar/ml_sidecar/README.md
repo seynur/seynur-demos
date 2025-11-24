@@ -527,15 +527,21 @@ You can confirm correct configuration using:
 | inputlookup auth_cluster_profiles_lookup 
 ```
 
+--- 
+
+# 📌 10. Create some generic Windows input
+
+The generic Windows inputs can be generated from `splunk_ml_sidecar/auth-windows-log-generator-as-json-with-real-user-behaviour.py`. Before running the script, `OUT_FILE` parameter should be changed as your paths. After that, you can ingest the output log into your Splunk environment.
+
 ---
 
-# 📌 10. Installation & Execution Steps
+# 📌 11. Installation & Execution Steps
 
 1. Clone the project
 
 ```
 git clone https://github.com/seynur/seynur-demos
-cd seynur-demos/ml_sidecar
+cd splunk/splunk_ml_sidecar/ml_sidecar
 ```
 
 2. Install the package in development mode
