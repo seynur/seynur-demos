@@ -1,0 +1,164 @@
+services:
+  cm:
+    image: splunk/splunk:latest
+    container_name: splunk-cm
+    hostname: splunk-cm
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "8000:8000"    # CM Web
+      - "8089:8089"    # CM Management port
+    volumes:
+      - cm-etc:/opt/splunk/etc
+      - cm-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  idx1:
+    image: splunk/splunk:latest
+    container_name: splunk-idx1
+    hostname: splunk-idx1
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "18089:8089"    # IDX1 Management port
+    volumes:
+      - idx1-etc:/opt/splunk/etc
+      - idx1-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  idx2:
+    image: splunk/splunk:latest
+    container_name: splunk-idx2
+    hostname: splunk-idx2
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "28089:8089"    # IDX2 Management port
+    volumes:
+      - idx2-etc:/opt/splunk/etc
+      - idx2-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  sh1:
+    image: splunk/splunk:latest
+    container_name: splunk-sh1
+    hostname: splunk-sh1
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "9000:8000"    # SH1 Web
+      - "9089:8089"    # SH1 Management port
+    volumes:
+      - sh1-etc:/opt/splunk/etc
+      - sh1-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  sh2:
+    image: splunk/splunk:latest
+    container_name: splunk-sh2
+    hostname: splunk-sh2
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "9001:8000"    # SH2 Web
+      - "9189:8089"    # SH2 Management port
+    volumes:
+      - sh2-etc:/opt/splunk/etc
+      - sh2-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  sh3:
+    image: splunk/splunk:latest
+    container_name: splunk-sh3
+    hostname: splunk-sh3
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "9002:8000"    # SH3 Web UI
+      - "9289:8089"    # SH3 Management port
+    volumes:
+      - sh3-etc:/opt/splunk/etc
+      - sh3-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  shc:
+    image: splunk/splunk:latest
+    container_name: splunk-shc
+    hostname: splunk-shc
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "7070:8000"    # SHC Web UI   
+      - "7089:8089"    # SHC Management port
+    volumes:
+      - shc-etc:/opt/splunk/etc
+      - shc-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  ds:
+    image: splunk/splunk:latest
+    container_name: splunk-ds
+    hostname: splunk-ds
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "6060:8000"   # DS Web UI
+      - "6189:8089"   # DS Management port
+    volumes:
+      - ds-etc:/opt/splunk/etc
+      - ds-var:/opt/splunk/var
+    networks:
+      - splunk-net    
+
+volumes:
+  cm-etc:
+  cm-var:
+  idx1-etc:
+  idx1-var:
+  idx2-etc:
+  idx2-var:
+  sh1-etc:
+  sh1-var:
+  sh2-etc:
+  sh2-var:
+  sh3-etc:
+  sh3-var:
+  shc-etc:
+  shc-var:
+  ds-etc:
+  ds-var:
+
+networks:
+  splunk-net:
+    driver: bridge
