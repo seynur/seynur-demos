@@ -1,0 +1,16 @@
+Nov 26 10:12:34 ubuntu kernel: [  123.456789] usb 1-1: new high-speed USB device number 3 using ehci-pci
+Nov 26 10:12:35 ubuntu systemd[1]: Starting Daily apt download activities...
+Nov 26 10:12:35 ubuntu systemd[1]: apt-daily.service: Succeeded.
+Nov 26 10:12:36 ubuntu NetworkManager[942]: <info>  [1673779956.1234] device (wlp2s0): supplicant interface state: associating → completed
+Nov 26 10:12:40 ubuntu CRON[2156]: (root) CMD (/usr/lib/apt/apt.systemd.daily update)
+Nov 26 10:12:45 ubuntu sshd[2277]: Accepted password for hilal from 192.168.1.23 port 54322 ssh2
+Nov 26 10:12:45 ubuntu sshd[2277]: pam_unix(sshd:session): session opened for user hilal by (uid=0)
+Nov 26 10:12:46 ubuntu systemd-logind[657]: New session 42 of user hilal.
+Nov 26 10:13:10 ubuntu sudo[2341]: hilal : TTY=pts/0 ; PWD=/home/hilal ; USER=root ; COMMAND=/usr/bin/apt install htop
+Nov 26 10:13:10 ubuntu sudo[2341]: pam_unix(sudo:session): session opened for user root by hilal(uid=0)
+Nov 26 10:13:12 ubuntu sudo[2341]: pam_unix(sudo:session): session closed for user root
+Nov 26 10:13:20 ubuntu systemd[1]: Started Session 43 of user hilal.
+Nov 26 10:14:02 ubuntu systemd[1]: Starting Rotate log files...
+Nov 26 10:14:02 ubuntu systemd[1]: logrotate.service: Succeeded.
+Nov 26 10:15:44 ubuntu kernel: [  189.123123] EXT4-fs (sda1): resizing filesystem from 1953500 to 1954000 blocks
+Nov 26 10:16:01 ubuntu CRON[2601]: (root) CMD (run-parts /etc/cron.hourly)

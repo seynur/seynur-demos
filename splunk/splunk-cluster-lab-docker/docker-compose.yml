@@ -139,7 +139,48 @@ services:
       - ds-etc:/opt/splunk/etc
       - ds-var:/opt/splunk/var
     networks:
-      - splunk-net    
+      - splunk-net
+
+  #######################################################################
+  # PART 2: HEAVY FORWARDER & UNIVERSAL FORWARDER
+  #######################################################################
+  hf:
+    image: splunk/splunk:latest
+    container_name: splunk-hf
+    hostname: splunk-hf
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "10000:8000"  # HF Web UI
+      - "1189:8089"   # HF Management Port
+      - "9997:9997"   # Forwarding Port
+    volumes:
+      - hf-etc:/opt/splunk/etc
+      - hf-var:/opt/splunk/var
+    networks:
+      - splunk-net
+
+  uf:
+    image: splunk/universalforwarder:latest
+    container_name: splunk-uf
+    hostname: splunk-uf
+    platform: linux/amd64
+    environment:
+      SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: "admin123"
+    ports:
+      - "9998:9997"
+    volumes:
+      - uf-etc:/opt/splunkforwarder/etc
+      - uf-var:/opt/splunkforwarder/var
+    networks:
+    - splunk-net 
+
+#######################################################################
 
 volumes:
   cm-etc:
@@ -158,6 +199,15 @@ volumes:
   shc-var:
   ds-etc:
   ds-var:
+
+#######################################################################
+ # PART 2: VOLUMES
+#######################################################################
+  hf-etc:
+  hf-var:
+  uf-etc:
+  uf-var:
+#######################################################################
 
 networks:
   splunk-net:
