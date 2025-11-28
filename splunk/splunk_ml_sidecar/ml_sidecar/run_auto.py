@@ -111,17 +111,7 @@ def run_auto_pipeline():
         e["behavior_outlier"] = int(score >= threshold)
 
     # -------------------------------------------------
-    # 7) Write enriched events to file (debug/archive)
-    # -------------------------------------------------
-    out_path = cfg["output"]["file"]["path"]
-    ensure_dir(os.path.dirname(out_path))
-    with open(out_path, "w") as f:
-        for e in enriched:
-            f.write(json.dumps(e) + "\n")
-    print(f"[AUTO] Saved inference to {out_path}")
-
-    # -------------------------------------------------
-    # 8) Build profiles (cluster / user / event)
+    # 7) Build profiles (cluster / user / event)
     # -------------------------------------------------
     print("[AUTO] Building profiles…")
     cluster_profiles = build_cluster_profiles(enriched)
@@ -136,7 +126,7 @@ def run_auto_pipeline():
         print("[DEBUG] No event records built!")
 
     # -------------------------------------------------
-    # 9) Write to KVStore (3 collections + thresholds)
+    # 8) Write to KVStore (3 collections + thresholds)
     # -------------------------------------------------
     kv_cfg = cfg["output"].get("splunk_kvstore", {})
     if not kv_cfg.get("enabled", False):

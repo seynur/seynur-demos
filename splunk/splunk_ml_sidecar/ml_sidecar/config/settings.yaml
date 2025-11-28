@@ -22,11 +22,7 @@ modeling:
 
 output:
   writers:
-    - "file"
     - "splunk_kvstore"
-  file:
-    path: "./data/model_outputs.jsonl"
-
   splunk_kvstore:
     enabled: true
     base_url: "https://127.0.0.1:8089"

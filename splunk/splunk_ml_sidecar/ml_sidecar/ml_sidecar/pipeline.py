@@ -190,19 +190,7 @@ def run_auto_pipeline(config=None):
             enriched = enriched_temp
 
     # --------------------------------------------------------------
-    # 6. WRITE RESULTS TO FILE
-    # --------------------------------------------------------------
-    out_path = cfg["output"]["file"]["path"]
-    ensure_dir(os.path.dirname(out_path))
-
-    with open(out_path, "w") as f:
-        for e in enriched:
-            f.write(json.dumps(e) + "\n")
-
-    print(f"[AUTO] Wrote results to {out_path}")
-
-    # --------------------------------------------------------------
-    # 7. WRITE RESULTS TO SPLUNK KV STORE (IF ENABLED)
+    # 6. WRITE RESULTS TO SPLUNK KV STORE (IF ENABLED)
     # --------------------------------------------------------------
     kv_cfg = cfg["output"]["splunk_kvstore"]
     if kv_cfg.get("enabled", False):

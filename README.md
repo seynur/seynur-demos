@@ -9,5 +9,7 @@ This repository contains some public demo examples in different fields.
 
 2. `splunk/` 
     - `splunk-cluster-lab-docker`: This app contains Splunk cluster installation on the Docker.
+        - medium links: 
     
     - `splunk_ml_sidecar`: This is a behavioral analytics engine designed to cluster Windows Authentication logs and compute multi-layer anomaly scores for every event.
+        - medium links: 

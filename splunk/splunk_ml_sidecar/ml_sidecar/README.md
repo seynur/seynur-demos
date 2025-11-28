@@ -198,7 +198,7 @@ user_hour_zscore →  (hour - mean_hour) / std_hour. Distance from user’s norm
 2. Authentication behavior features
 
 ```
-Feature/Açıklama
+Feature → Descriptions
 
 signature_id → Windows event ID (4624, 4625, 4672, 4768, 4769). Identity of the logon/failure event.
 action_type → success / failure ([1/0]).
@@ -208,7 +208,7 @@ privileged_action_flag → 4672 (privileged logon) → 1.
 
 3. Source/Destination network features
 ```
-Feature/Açıklama
+Feature → Descriptions
 
 is_private_ip → if the ip is private (RFC1918), 1, else 0.
 src_subnet → A.B normalize subnet (e.g.: 10.10).
@@ -219,7 +219,7 @@ external_ip_flag → 1 if source is public (“attacker-like” behaviour). ???
 
 4. Statistical / distributional features
 ```
-Feature/Açıklama
+Feature → Descriptions
 
 user_cluster_hist prior → Past cluster distribution per user.
 user_mean_hour → Learned mean login hour.
