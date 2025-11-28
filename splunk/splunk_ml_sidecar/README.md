@@ -1,4 +1,4 @@
-# splunk_ml_sidecar — Repository Overview
+# `splunk_ml_sidecar` — Repository Overview
 
 This repository contains a full behavioral analytics pipeline (“ML Sidecar”) for Splunk, together with a Splunk app that provides dashboards and KVStore-backed lookups for visualizing the results.
 
@@ -72,6 +72,10 @@ The splunk_ml_sidecar_app/ folder is a Splunk app containing:
 KVStore collection configurations
 - collections.conf
 - transforms.conf
+
+Input & index configuration
+- inputs.conf
+- indexes.conf
 
 These allow the ML pipeline to write enriched results into Splunk lookups:
 - auth_events_lookup
