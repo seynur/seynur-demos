@@ -1,3 +1,21 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+model.py — KMeans model training, loading, inference, and drift detection logic.
+
+This module implements:
+    • User behavior profiling (mean/std login hour)
+    • Feature extraction orchestration
+    • KMeans training with auto-K selection
+    • Outlier scoring (multi-layer composite score)
+    • Drift detection using Chi-square distance
+
+It is used by the main pipeline:
+    etc/pipeline.py
+"""
+
+
+
 import os
 import json
 from datetime import datetime
@@ -10,24 +28,59 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import silhouette_score
 from scipy.stats import chisquare
 
-from ml_sidecar.features import extract_features
-from ml_sidecar.utils_time import parse_windows_time
+from core.features import extract_features
+from core.utils import parse_windows_time
 
 
-# ---------------------------------------------------
-# MODEL EXISTS?
-# ---------------------------------------------------
+# ============================================================================
+#  MODEL EXISTENCE CHECK
+# ============================================================================
+
 def model_exists(path: str) -> bool:
+    """
+    Check whether a model already exists on disk.
+
+    A valid model consists of:
+        <path>.pkl          → trained KMeans model
+        <path>_scaler.pkl   → fitted MinMaxScaler
+        <path>.json         → metadata
+
+    Only checks for the .pkl (KMeans) file.
+
+    Parameters
+    ----------
+    path : str
+        Base filepath (without extension).
+
+    Returns
+    -------
+    bool
+        True if model exists, else False.
+    """
     return os.path.exists(path + ".pkl")
 
 
-# ---------------------------------------------------
-# USER PROFILE (mean/std of login hour per user)
-# ---------------------------------------------------
+# ============================================================================
+#  BUILD USER PROFILE (mean/std login hour)
+# ============================================================================
+
 def build_user_profile(events: List[Dict]) -> Dict[str, Dict[str, float]]:
     """
-    Kullanıcı bazlı saat istatistiği:
-    user -> { mean_hour, std_hour }
+    Build per-user behavioral statistics:
+        user → { mean_hour, std_hour }
+
+    The login hour mean and std help capture long-term temporal
+    patterns of user authentication behavior.
+
+    Parameters
+    ----------
+    events : list of dict
+        List of authentication events.
+
+    Returns
+    -------
+    dict
+        { user: { "mean_hour": float, "std_hour": float }, ... }
     """
     user_hours: Dict[str, List[int]] = {}
 
@@ -38,21 +91,20 @@ def build_user_profile(events: List[Dict]) -> Dict[str, Dict[str, float]]:
             continue
 
         dt = parse_windows_time(ts)
-        if not dt:
-            continue
-
-        user_hours.setdefault(user, []).append(dt.hour)
+        if dt:
+            user_hours.setdefault(user, []).append(dt.hour)
 
     profile: Dict[str, Dict[str, float]] = {}
 
     for user, hours in user_hours.items():
         if not hours:
+            # Reasonable defaults
             mean_h = 12.0
             std_h = 4.0
         else:
             mean_h = float(np.mean(hours))
             std_val = float(np.std(hours)) if len(hours) > 1 else 1.0
-            std_h = std_val if std_val > 0 else 1.0
+            std_h = max(std_val, 1.0)     # avoid zero
 
         profile[user] = {
             "mean_hour": mean_h,
@@ -62,32 +114,54 @@ def build_user_profile(events: List[Dict]) -> Dict[str, Dict[str, float]]:
     return profile
 
 
-# ---------------------------------------------------
-# TRAIN MODEL
-# ---------------------------------------------------
+# ============================================================================
+#  TRAIN MODEL (Auto-KSelection + Scaler + Metadata)
+# ============================================================================
+
 def train_model(events: List[Dict], config, save_path: str):
     """
-    K-Means + MinMaxScaler + user_profile + cluster_dist üretir
-    ve modeli disk'e kaydeder.
+    Train a KMeans model with MinMax scaling and auto-K selection.
+
+    Steps:
+        1) Derive user profile (mean/std hour)
+        2) Extract features from events
+        3) Fit MinMaxScaler
+        4) Try different K values, pick best silhouette score
+        5) Save model, scaler, and metadata (cluster_dist, user_profile, etc.)
+
+    Parameters
+    ----------
+    events : list of dict
+        Authentication events.
+
+    config : dict
+        Full YAML configuration dictionary.
+
+    save_path : str
+        Base filepath for saving model artifacts.
+
+    Returns
+    -------
+    (model, scaler, meta)
     """
     print(f"[MODEL] Training on {len(events)} events...")
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-    # 1) user behavior profile
+    # 1) User behavioral profile
     user_profile = build_user_profile(events)
 
-    # 2) feature matrisi
+    # 2) Feature matrix
     X_raw = np.array(
         [extract_features(e, user_profile) for e in events],
-        dtype="float32",
+        dtype="float32"
     )
 
-    # 3) scaling
+    # 3) Fit scaler
     scaler = MinMaxScaler()
     X = scaler.fit_transform(X_raw)
 
-    # 4) candidate K seti
+    # 4) Auto-K
     ks = config.get("modeling", {}).get("candidate_k", [4, 6, 8, 10, 12])
     best_k = None
     best_model = None
@@ -98,59 +172,64 @@ def train_model(events: List[Dict], config, save_path: str):
             km = KMeans(n_clusters=k, random_state=42, n_init="auto")
             labels = km.fit_predict(X)
 
-            # Tek cluster'a çökerse silhouette anlamsız
+            # Reject degenerate solutions (all points same cluster)
             if len(set(labels)) == 1:
                 continue
 
             score = silhouette_score(X, labels)
             print(f"[MODEL] k={k} silhouette={score:.4f}")
+
             if score > best_score:
                 best_score = score
                 best_model = km
                 best_k = k
+
         except Exception as exc:
             print(f"[MODEL] k={k} failed: {exc}")
             continue
 
+    # Fallback if all fail
     if best_model is None:
-        # Tamamen çökerse fallback
-        print("[MODEL] Fallback k=4")
+        print("[MODEL] Fallback: k=4 (all Ks collapsed)")
         best_model = KMeans(n_clusters=4, random_state=42, n_init="auto").fit(X)
         best_k = 4
 
-    # 5) cluster dağılımı
+    # 5) Cluster distribution (label counts)
     unique, counts = np.unique(best_model.labels_, return_counts=True)
     cluster_dist = {int(k): int(v) for k, v in zip(unique, counts)}
 
-    # 6) user_profile'i JSON-safe hale getir
+    # 6) Serialize user profile (JSON-safe)
     safe_user_profile = {
         user: {
-            "mean_hour": float(prof["mean_hour"]),
-            "std_hour": float(prof["std_hour"]),
+            "mean_hour": float(p["mean_hour"]),
+            "std_hour": float(p["std_hour"]),
         }
-        for user, prof in user_profile.items()
+        for user, p in user_profile.items()
     }
 
+    # 7) Metadata
     meta = {
         "trained_at": datetime.utcnow().isoformat() + "Z",
-        "events": int(len(events)),
-        "feature_dim": int(X.shape[1]),
-        "best_k": int(best_k),
+        "events": len(events),
+        "feature_dim": X.shape[1],
+        "best_k": best_k,
         "user_profile": safe_user_profile,
         "cluster_dist": cluster_dist,
     }
 
+    # Remove all numpy scalar types before saving
     def sanitize(o):
         if isinstance(o, dict):
             return {str(k): sanitize(v) for k, v in o.items()}
         if isinstance(o, list):
             return [sanitize(v) for v in o]
-        if hasattr(o, "item"):  # numpy scalar
+        if hasattr(o, "item"):
             return o.item()
         return o
 
     meta = sanitize(meta)
 
+    # 8) Save artifacts
     joblib.dump(best_model, save_path + ".pkl")
     joblib.dump(scaler, save_path + "_scaler.pkl")
     with open(save_path + ".json", "w") as f:
@@ -160,10 +239,23 @@ def train_model(events: List[Dict], config, save_path: str):
     return best_model, scaler, meta
 
 
-# ---------------------------------------------------
-# LOAD MODEL
-# ---------------------------------------------------
+# ============================================================================
+#  LOAD MODEL (KMeans + Scaler + Metadata)
+# ============================================================================
+
 def load_model(path: str):
+    """
+    Load model, scaler, and metadata.
+
+    Parameters
+    ----------
+    path : str
+        Base model path (without extension).
+
+    Returns
+    -------
+    (model, scaler, meta)
+    """
     model = joblib.load(path + ".pkl")
     scaler = joblib.load(path + "_scaler.pkl")
     with open(path + ".json") as f:
@@ -171,22 +263,40 @@ def load_model(path: str):
     return model, scaler, meta
 
 
-# ---------------------------------------------------
-# PREDICT + ANOMALY SCORE
-# ---------------------------------------------------
+# ============================================================================
+#  PREDICT + ANOMALY SCORE
+# ============================================================================
+
 def predict(model_data, events: List[Dict]) -> List[Dict]:
     """
-    3 katmanlı anomaly skoru:
+    Run inference on events and compute multi-layer anomaly score.
 
-    - outlier_score: KMeans centroid distance, [0,1] normalize
-    - cluster_rarity: user'ın bu cluster'a ne kadar az düştüğü (1 - freq)
-    - signature_rarity: cluster içi signature olasılığına göre (1 - p(sig|cluster))
-    - user_hour_score: user hour z-score, 3σ ve üstü ≈ 1
-    - final_anomaly_score: 0.4 * outlier + 0.3 * cluster_rarity +
-                           0.2 * signature_rarity + 0.1 * user_hour_score
+    Layers:
+        1) outlier_score:
+            • Distance to KMeans centroid (scaled 0–1)
 
-    Bu fonksiyon behavior_outlier flag'ini set ETMEZ.
-    Onu run_auto.py içinde threshold'a göre set ediyoruz.
+        2) cluster_rarity:
+            • How rarely the user falls into this cluster
+            • 1 - freq(user, cluster) / total_user_events
+
+        3) signature_rarity:
+            • 1 - P(signature | cluster)
+
+        4) user_hour_score:
+            • Z-score deviation of login time
+            • normalized so ≥3σ → score ~ 1
+
+        final_anomaly_score:
+            0.4*outlier + 0.3*cluster_rarity
+          + 0.2*signature_rarity + 0.1*user_hour_score
+
+    This function does **NOT** assign the `behavior_outlier` flag.
+    That happens in the pipeline after dynamic thresholding.
+
+    Returns
+    -------
+    list of dict
+        Each enriched event with anomaly fields appended.
     """
     model, scaler, meta = model_data
     user_profile = meta.get("user_profile", {})
@@ -194,10 +304,10 @@ def predict(model_data, events: List[Dict]) -> List[Dict]:
     if not events:
         return []
 
-    # ---------- 1. PASS: KMeans + histogramlar ----------
+    # --- First pass: Feature extraction & cluster prediction ---
     X_raw = np.array(
         [extract_features(e, user_profile) for e in events],
-        dtype="float32",
+        dtype="float32"
     )
     X_scaled = scaler.transform(X_raw)
 
@@ -205,14 +315,13 @@ def predict(model_data, events: List[Dict]) -> List[Dict]:
     distances = model.transform(X_scaled)
     centroid_dist = distances.min(axis=1)
 
-    # base outlier score [0,1]
+    # Normalize distance to [0,1]
     outlier_score = (centroid_dist - centroid_dist.min()) / (
         (centroid_dist.max() - centroid_dist.min()) + 1e-9
     )
 
-    # user-cluster histogram: {user -> {cluster -> count}}
+    # Build user-cluster histogram
     user_cluster_hist: Dict[str, Dict[int, int]] = {}
-    # cluster-signature histogram: {cluster -> {signature -> count}}
     cluster_sig_hist: Dict[int, Dict[str, int]] = {}
 
     for e, cid in zip(events, labels):
@@ -220,54 +329,49 @@ def predict(model_data, events: List[Dict]) -> List[Dict]:
         user = e.get("user", "unknown")
         sig = e.get("signature")
 
-        # user-cluster
         user_cluster_hist.setdefault(user, {})
         user_cluster_hist[user][cid] = user_cluster_hist[user].get(cid, 0) + 1
 
-        # cluster-signature
         cluster_sig_hist.setdefault(cid, {})
         cluster_sig_hist[cid][sig] = cluster_sig_hist[cid].get(sig, 0) + 1
 
     total_user_events = {u: sum(d.values()) for u, d in user_cluster_hist.items()}
 
-    # signature dağılımlarını olasılığa çevir
+    # Convert signature histograms to probability distributions
     cluster_sig_dist: Dict[int, Dict[str, float]] = {}
     for cid, sig_counts in cluster_sig_hist.items():
         total = float(sum(sig_counts.values())) or 1.0
         cluster_sig_dist[cid] = {sig: cnt / total for sig, cnt in sig_counts.items()}
 
-    # ---------- 2. PASS: anomaly bileşenleri ----------
+    # --- Second pass: Anomaly scoring ---
     output: List[Dict] = []
 
     for e, cid, base_out in zip(events, labels, outlier_score):
         cid = int(cid)
         user = e.get("user", "unknown")
 
-        # cluster_rarity (user bazında)
+        # cluster_rarity
         u_total = total_user_events.get(user, 1)
         u_c_freq = user_cluster_hist.get(user, {}).get(cid, 0)
         cluster_rarity = 1.0 - (u_c_freq / u_total)
 
-        # signature_rarity (cluster içinde)
+        # signature_rarity
         sig = e.get("signature")
-        sig_dist = cluster_sig_dist.get(cid, {})
-        signature_rarity = 1.0 - sig_dist.get(sig, 0.0)
+        signature_rarity = 1.0 - cluster_sig_dist.get(cid, {}).get(sig, 0.0)
 
-        # hour score
+        # Login hour score
         ts = e.get("TimeCreated")
         dt = parse_windows_time(ts)
-        if dt:
-            hour = dt.hour
-        else:
-            hour = 12
+        hour = dt.hour if dt else 12
 
         up = user_profile.get(user, {"mean_hour": 12.0, "std_hour": 4.0})
-        mean_h = up.get("mean_hour", 12.0)
-        std_h = up.get("std_hour", 4.0) or 1.0
+        mean_h = up["mean_hour"]
+        std_h = up["std_hour"] or 1.0
 
         z = abs(hour - mean_h) / std_h
-        user_hour_score = min(z / 3.0, 1.0)  # 3σ ve üzeri ~ 1
+        user_hour_score = min(z / 3.0, 1.0)
 
+        # Final composite score
         final_score = (
             0.4 * float(base_out)
             + 0.3 * float(cluster_rarity)
@@ -291,32 +395,49 @@ def predict(model_data, events: List[Dict]) -> List[Dict]:
     return output
 
 
-# ---------------------------------------------------
-# DRIFT
-# ---------------------------------------------------
+# ============================================================================
+#  DRIFT DETECTION
+# ============================================================================
+
 def compute_model_drift(old_dist, new_labels):
     """
-    Eski cluster dağılımı ile yeni dağılımı karşılaştırır.
-    p-value küçükse drift var kabul edilir.
+    Compare old cluster distribution with new cluster distribution
+    using Chi-Square goodness of fit.
+
+    Interpretation:
+        • p-value < threshold (e.g., 0.05) → Drift detected
+        • p-value >= threshold → No drift
+
+    Parameters
+    ----------
+    old_dist : dict
+        { cluster_id: count }
+
+    new_labels : list or array
+        New predicted cluster IDs.
+
+    Returns
+    -------
+    float
+        p-value of drift test. Lower p-value → greater drift.
     """
     old_dist_clean = {int(k): float(v) for k, v in old_dist.items()}
 
     uniq, cnt = np.unique(new_labels, return_counts=True)
     new_dist = {int(u): float(c) for u, c in zip(uniq, cnt)}
 
+    # Align cluster IDs
     keys = sorted(set(old_dist_clean.keys()) | set(new_dist.keys()))
 
     old_arr = np.array([old_dist_clean.get(k, 1e-6) for k in keys], dtype=float)
     new_arr = np.array([new_dist.get(k, 1e-6) for k in keys], dtype=float)
 
-    old_sum = old_arr.sum()
-    new_sum = new_arr.sum()
+    # Avoid divide-by-zero
+    if old_arr.sum() == 0 or new_arr.sum() == 0:
+        return 1.0
 
-    if old_sum == 0 or new_sum == 0:
-        return 1.0  # no drift anlamına gelsin
-
-    old_arr = old_arr / old_sum
-    new_arr = new_arr / new_sum
+    old_arr = old_arr / old_arr.sum()
+    new_arr = new_arr / new_arr.sum()
 
     try:
         chi2, p = chisquare(new_arr, f_exp=old_arr)
