@@ -3,18 +3,17 @@
 """
 model.py — KMeans model training, loading, inference, and drift detection logic.
 
-This module implements:
-    • User behavior profiling (mean/std login hour)
-    • Feature extraction orchestration
-    • KMeans training with auto-K selection
-    • Outlier scoring (multi-layer composite score)
-    • Drift detection using Chi-square distance
+This module provides the core ML logic for the Splunk ML Sidecar:
 
-It is used by the main pipeline:
+- Builds user behavior profiles (mean/std login hour)
+- Extracts feature vectors from events
+- Trains a KMeans model (auto-selects best K via silhouette score)
+- Computes multi-layer anomaly scores during prediction
+- Detects model drift using Chi-square distribution shift
+
+Used by:
     etc/pipeline.py
 """
-
-
 
 import os
 import json
@@ -33,205 +32,153 @@ from core.utils import parse_windows_time
 
 
 # ============================================================================
-#  MODEL EXISTENCE CHECK
+#  CHECK IF MODEL EXISTS
 # ============================================================================
 
 def model_exists(path: str) -> bool:
     """
-    Check whether a model already exists on disk.
+    Check whether the trained model file (<path>.pkl) already exists.
 
-    A valid model consists of:
-        <path>.pkl          → trained KMeans model
-        <path>_scaler.pkl   → fitted MinMaxScaler
-        <path>.json         → metadata
-
-    Only checks for the .pkl (KMeans) file.
-
-    Parameters
-    ----------
-    path : str
-        Base filepath (without extension).
-
-    Returns
-    -------
-    bool
-        True if model exists, else False.
+    Only the KMeans pickle is required for detecting existence;
+    scaler and metadata are expected to exist alongside it.
     """
     return os.path.exists(path + ".pkl")
 
 
 # ============================================================================
-#  BUILD USER PROFILE (mean/std login hour)
+#  BUILD USER PROFILE (MEAN/STDEV LOGIN HOUR)
 # ============================================================================
 
 def build_user_profile(events: List[Dict]) -> Dict[str, Dict[str, float]]:
     """
-    Build per-user behavioral statistics:
-        user → { mean_hour, std_hour }
+    Build per-user temporal behavioral profile.
 
-    The login hour mean and std help capture long-term temporal
-    patterns of user authentication behavior.
+    For each user:
+        - mean_hour: average login hour
+        - std_hour: variability in login hour
 
-    Parameters
-    ----------
-    events : list of dict
-        List of authentication events.
-
-    Returns
-    -------
-    dict
-        { user: { "mean_hour": float, "std_hour": float }, ... }
+    These values help detect temporal anomalies during prediction.
     """
     user_hours: Dict[str, List[int]] = {}
 
+    # Collect login hours for each user
     for e in events:
         user = e.get("user", "unknown")
         ts = e.get("TimeCreated")
-        if not ts:
-            continue
-
         dt = parse_windows_time(ts)
         if dt:
             user_hours.setdefault(user, []).append(dt.hour)
 
-    profile: Dict[str, Dict[str, float]] = {}
+    # Compute statistics
+    profile = {}
 
     for user, hours in user_hours.items():
-        if not hours:
-            # Reasonable defaults
-            mean_h = 12.0
-            std_h = 4.0
-        else:
+        if hours:
+            # Standard temporal behavior from real timestamps
             mean_h = float(np.mean(hours))
             std_val = float(np.std(hours)) if len(hours) > 1 else 1.0
-            std_h = max(std_val, 1.0)     # avoid zero
+        else:
+            # Fallback when user has no timestamped events
+            mean_h = 12.0
+            std_val = 4.0
 
+        # std_hour must never be zero (avoid division-by-zero later)
         profile[user] = {
             "mean_hour": mean_h,
-            "std_hour": std_h,
+            "std_hour": max(std_val, 1.0)
         }
 
     return profile
 
 
 # ============================================================================
-#  TRAIN MODEL (Auto-KSelection + Scaler + Metadata)
+#  TRAIN KMEANS MODEL WITH AUTO-K
 # ============================================================================
 
 def train_model(events: List[Dict], config, save_path: str):
     """
-    Train a KMeans model with MinMax scaling and auto-K selection.
+    Train a new KMeans model with MinMaxScaler and auto-K selection.
 
     Steps:
-        1) Derive user profile (mean/std hour)
-        2) Extract features from events
-        3) Fit MinMaxScaler
-        4) Try different K values, pick best silhouette score
-        5) Save model, scaler, and metadata (cluster_dist, user_profile, etc.)
-
-    Parameters
-    ----------
-    events : list of dict
-        Authentication events.
-
-    config : dict
-        Full YAML configuration dictionary.
-
-    save_path : str
-        Base filepath for saving model artifacts.
-
-    Returns
-    -------
-    (model, scaler, meta)
+        1. Build user behavioral profile
+        2. Extract features into a numeric matrix
+        3. Fit MinMaxScaler (normalize 0–1)
+        4. Try multiple K values → pick best silhouette score
+        5. Save model, scaler, and metadata to disk
     """
     print(f"[MODEL] Training on {len(events)} events...")
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-    # 1) User behavioral profile
+    # 1. User temporal behavior
     user_profile = build_user_profile(events)
 
-    # 2) Feature matrix
-    X_raw = np.array(
-        [extract_features(e, user_profile) for e in events],
-        dtype="float32"
-    )
+    # 2. Event → feature vector (numeric)
+    X_raw = np.array([extract_features(e, user_profile) for e in events], dtype="float32")
 
-    # 3) Fit scaler
+    # 3. Normalize features
     scaler = MinMaxScaler()
     X = scaler.fit_transform(X_raw)
 
-    # 4) Auto-K
+    # 4. Auto-K selection (try multiple K values)
     ks = config.get("modeling", {}).get("candidate_k", [4, 6, 8, 10, 12])
-    best_k = None
-    best_model = None
-    best_score = -1.0
+    best_model, best_k, best_score = None, None, -1
 
     for k in ks:
         try:
             km = KMeans(n_clusters=k, random_state=42, n_init="auto")
             labels = km.fit_predict(X)
 
-            # Reject degenerate solutions (all points same cluster)
+            # Degenerate case: model assigns all points to same cluster
             if len(set(labels)) == 1:
                 continue
 
             score = silhouette_score(X, labels)
-            print(f"[MODEL] k={k} silhouette={score:.4f}")
+            print(f"[MODEL] k={k}, silhouette={score:.4f}")
 
+            # Keep model with highest silhouette score
             if score > best_score:
-                best_score = score
                 best_model = km
                 best_k = k
+                best_score = score
 
         except Exception as exc:
             print(f"[MODEL] k={k} failed: {exc}")
-            continue
 
-    # Fallback if all fail
+    # Fallback if all K attempts fail
     if best_model is None:
-        print("[MODEL] Fallback: k=4 (all Ks collapsed)")
+        print("[MODEL] Fallback: k=4")
         best_model = KMeans(n_clusters=4, random_state=42, n_init="auto").fit(X)
         best_k = 4
 
-    # 5) Cluster distribution (label counts)
+    # 5. Baseline cluster distribution (for drift detection later)
     unique, counts = np.unique(best_model.labels_, return_counts=True)
     cluster_dist = {int(k): int(v) for k, v in zip(unique, counts)}
 
-    # 6) Serialize user profile (JSON-safe)
-    safe_user_profile = {
-        user: {
-            "mean_hour": float(p["mean_hour"]),
-            "std_hour": float(p["std_hour"]),
-        }
-        for user, p in user_profile.items()
-    }
-
-    # 7) Metadata
+    # Prepare metadata
     meta = {
         "trained_at": datetime.utcnow().isoformat() + "Z",
         "events": len(events),
         "feature_dim": X.shape[1],
         "best_k": best_k,
-        "user_profile": safe_user_profile,
-        "cluster_dist": cluster_dist,
+
+        # user profile saved for inference use
+        "user_profile": {
+            user: {
+                "mean_hour": float(p["mean_hour"]),
+                "std_hour": float(p["std_hour"])
+            }
+            for user, p in user_profile.items()
+        },
+
+        # cluster distribution for drift detection
+        "cluster_dist": cluster_dist
     }
 
-    # Remove all numpy scalar types before saving
-    def sanitize(o):
-        if isinstance(o, dict):
-            return {str(k): sanitize(v) for k, v in o.items()}
-        if isinstance(o, list):
-            return [sanitize(v) for v in o]
-        if hasattr(o, "item"):
-            return o.item()
-        return o
-
-    meta = sanitize(meta)
-
-    # 8) Save artifacts
+    # Save to disk
     joblib.dump(best_model, save_path + ".pkl")
     joblib.dump(scaler, save_path + "_scaler.pkl")
+
     with open(save_path + ".json", "w") as f:
         json.dump(meta, f, indent=2)
 
@@ -240,21 +187,12 @@ def train_model(events: List[Dict], config, save_path: str):
 
 
 # ============================================================================
-#  LOAD MODEL (KMeans + Scaler + Metadata)
+#  LOAD MODEL FROM DISK
 # ============================================================================
 
 def load_model(path: str):
     """
-    Load model, scaler, and metadata.
-
-    Parameters
-    ----------
-    path : str
-        Base model path (without extension).
-
-    Returns
-    -------
-    (model, scaler, meta)
+    Load a trained model, scaler, and metadata from disk.
     """
     model = joblib.load(path + ".pkl")
     scaler = joblib.load(path + "_scaler.pkl")
@@ -264,39 +202,23 @@ def load_model(path: str):
 
 
 # ============================================================================
-#  PREDICT + ANOMALY SCORE
+#  INFERENCE + MULTI-LAYER ANOMALY SCORING
 # ============================================================================
 
 def predict(model_data, events: List[Dict]) -> List[Dict]:
     """
-    Run inference on events and compute multi-layer anomaly score.
+    Run inference on events and compute a multi-layer anomaly score.
 
     Layers:
-        1) outlier_score:
-            • Distance to KMeans centroid (scaled 0–1)
+        1. outlier_score        → distance from cluster centroid
+        2. cluster_rarity       → unusual cluster assignment for user
+        3. signature_rarity     → rare signature_id within cluster
+        4. user_hour_score      → deviation from user's normal login hour
 
-        2) cluster_rarity:
-            • How rarely the user falls into this cluster
-            • 1 - freq(user, cluster) / total_user_events
+    final_anomaly_score = weighted sum of layers
 
-        3) signature_rarity:
-            • 1 - P(signature | cluster)
-
-        4) user_hour_score:
-            • Z-score deviation of login time
-            • normalized so ≥3σ → score ~ 1
-
-        final_anomaly_score:
-            0.4*outlier + 0.3*cluster_rarity
-          + 0.2*signature_rarity + 0.1*user_hour_score
-
-    This function does **NOT** assign the `behavior_outlier` flag.
-    That happens in the pipeline after dynamic thresholding.
-
-    Returns
-    -------
-    list of dict
-        Each enriched event with anomaly fields appended.
+    Returns:
+        list of enriched events
     """
     model, scaler, meta = model_data
     user_profile = meta.get("user_profile", {})
@@ -304,144 +226,138 @@ def predict(model_data, events: List[Dict]) -> List[Dict]:
     if not events:
         return []
 
-    # --- First pass: Feature extraction & cluster prediction ---
-    X_raw = np.array(
-        [extract_features(e, user_profile) for e in events],
-        dtype="float32"
-    )
-    X_scaled = scaler.transform(X_raw)
+    # ---------------- FIRST PASS: embed + cluster ----------------
+    X_raw = np.array([extract_features(e, user_profile) for e in events], dtype="float32")
+    X = scaler.transform(X_raw)
 
-    labels = model.predict(X_scaled)
-    distances = model.transform(X_scaled)
+    # Assign clusters
+    labels = model.predict(X)
+
+    # Distance to each centroid → take minimum distance
+    distances = model.transform(X)
     centroid_dist = distances.min(axis=1)
 
-    # Normalize distance to [0,1]
+    # Normalize distances to 0–1
     outlier_score = (centroid_dist - centroid_dist.min()) / (
         (centroid_dist.max() - centroid_dist.min()) + 1e-9
     )
 
-    # Build user-cluster histogram
-    user_cluster_hist: Dict[str, Dict[int, int]] = {}
-    cluster_sig_hist: Dict[int, Dict[str, int]] = {}
+    # Build histograms
+    user_cluster_hist = {}      # user → {cluster: count}
+    cluster_sig_hist = {}       # cluster → {signature_id: count}
 
     for e, cid in zip(events, labels):
         cid = int(cid)
         user = e.get("user", "unknown")
-        sig = e.get("signature")
+        sig_id = str(e.get("signature_id") or "0")
 
+        # Count cluster usage per user
         user_cluster_hist.setdefault(user, {})
         user_cluster_hist[user][cid] = user_cluster_hist[user].get(cid, 0) + 1
 
+        # Count signature usage per cluster
         cluster_sig_hist.setdefault(cid, {})
-        cluster_sig_hist[cid][sig] = cluster_sig_hist[cid].get(sig, 0) + 1
+        cluster_sig_hist[cid][sig_id] = cluster_sig_hist[cid].get(sig_id, 0) + 1
 
-    total_user_events = {u: sum(d.values()) for u, d in user_cluster_hist.items()}
+    # Compute total per user (needed for rarity score)
+    total_user_events = {u: sum(c.values()) for u, c in user_cluster_hist.items()}
 
     # Convert signature histograms to probability distributions
-    cluster_sig_dist: Dict[int, Dict[str, float]] = {}
+    cluster_sig_dist = {}
     for cid, sig_counts in cluster_sig_hist.items():
         total = float(sum(sig_counts.values())) or 1.0
         cluster_sig_dist[cid] = {sig: cnt / total for sig, cnt in sig_counts.items()}
 
-    # --- Second pass: Anomaly scoring ---
-    output: List[Dict] = []
+    # ---------------- SECOND PASS: scoring ----------------
+    enriched = []
 
     for e, cid, base_out in zip(events, labels, outlier_score):
         cid = int(cid)
         user = e.get("user", "unknown")
+        sig_id = str(e.get("signature_id") or "0")
 
-        # cluster_rarity
+        # (2) How unusual is this cluster for the specific user?
         u_total = total_user_events.get(user, 1)
-        u_c_freq = user_cluster_hist.get(user, {}).get(cid, 0)
-        cluster_rarity = 1.0 - (u_c_freq / u_total)
+        u_freq = user_cluster_hist.get(user, {}).get(cid, 0)
+        cluster_rarity = 1.0 - (u_freq / u_total)
 
-        # signature_rarity
-        sig = e.get("signature")
-        signature_rarity = 1.0 - cluster_sig_dist.get(cid, {}).get(sig, 0.0)
+        # (3) How rare is this signature_id inside the cluster?
+        signature_rarity = 1.0 - cluster_sig_dist.get(cid, {}).get(sig_id, 0.0)
 
-        # Login hour score
-        ts = e.get("TimeCreated")
-        dt = parse_windows_time(ts)
+        # (4) Temporal deviation (Z-score of login hour)
+        dt = parse_windows_time(e.get("TimeCreated"))
         hour = dt.hour if dt else 12
-
         up = user_profile.get(user, {"mean_hour": 12.0, "std_hour": 4.0})
-        mean_h = up["mean_hour"]
-        std_h = up["std_hour"] or 1.0
 
+        mean_h, std_h = up["mean_hour"], up["std_hour"]
         z = abs(hour - mean_h) / std_h
-        user_hour_score = min(z / 3.0, 1.0)
+        user_hour_score = min(z / 3.0, 1.0)  # cap at 1.0
 
-        # Final composite score
+        # Weighted composite anomaly score
         final_score = (
-            0.4 * float(base_out)
-            + 0.3 * float(cluster_rarity)
-            + 0.2 * float(signature_rarity)
-            + 0.1 * float(user_hour_score)
+            0.4 * float(base_out) +
+            0.3 * float(cluster_rarity) +
+            0.2 * float(signature_rarity) +
+            0.1 * float(user_hour_score)
         )
 
+        # Produce enriched event copy
         out_evt = dict(e)
-        out_evt.update(
-            {
-                "cluster_id": cid,
-                "outlier_score": float(base_out),
-                "cluster_rarity": float(cluster_rarity),
-                "signature_rarity": float(signature_rarity),
-                "user_hour_score": float(user_hour_score),
-                "final_anomaly_score": float(final_score),
-            }
-        )
-        output.append(out_evt)
+        out_evt.update({
+            "cluster_id": cid,
+            "outlier_score": float(base_out),
+            "cluster_rarity": float(cluster_rarity),
+            "signature_rarity": float(signature_rarity),
+            "user_hour_score": float(user_hour_score),
+            "final_anomaly_score": float(final_score),
+        })
 
-    return output
+        enriched.append(out_evt)
+
+    return enriched
 
 
 # ============================================================================
-#  DRIFT DETECTION
+#  DRIFT DETECTION USING CHI-SQUARE
 # ============================================================================
 
 def compute_model_drift(old_dist, new_labels):
     """
-    Compare old cluster distribution with new cluster distribution
-    using Chi-Square goodness of fit.
+    Compare the original cluster distribution (from training)
+    with distribution of current events using Chi-square test.
 
     Interpretation:
-        • p-value < threshold (e.g., 0.05) → Drift detected
-        • p-value >= threshold → No drift
+        p < threshold → DRIFT detected (distribution changed significantly)
+        p ≥ threshold → NO drift
 
-    Parameters
-    ----------
-    old_dist : dict
-        { cluster_id: count }
-
-    new_labels : list or array
-        New predicted cluster IDs.
-
-    Returns
-    -------
-    float
-        p-value of drift test. Lower p-value → greater drift.
+    Returns:
+        float — p-value of the goodness-of-fit test
     """
-    old_dist_clean = {int(k): float(v) for k, v in old_dist.items()}
+    old_dist = {int(k): float(v) for k, v in old_dist.items()}
 
+    # Build new distribution
     uniq, cnt = np.unique(new_labels, return_counts=True)
-    new_dist = {int(u): float(c) for u, c in zip(uniq, cnt)}
+    new_dist = {int(i): float(c) for i, c in zip(uniq, cnt)}
 
-    # Align cluster IDs
-    keys = sorted(set(old_dist_clean.keys()) | set(new_dist.keys()))
+    # Align keys
+    keys = sorted(set(old_dist.keys()) | set(new_dist.keys()))
 
-    old_arr = np.array([old_dist_clean.get(k, 1e-6) for k in keys], dtype=float)
+    # Convert to comparable arrays
+    old_arr = np.array([old_dist.get(k, 1e-6) for k in keys], dtype=float)
     new_arr = np.array([new_dist.get(k, 1e-6) for k in keys], dtype=float)
 
-    # Avoid divide-by-zero
+    # Avoid zero-sum distributions
     if old_arr.sum() == 0 or new_arr.sum() == 0:
         return 1.0
 
-    old_arr = old_arr / old_arr.sum()
-    new_arr = new_arr / new_arr.sum()
+    # Normalize to probability distributions
+    old_arr /= old_arr.sum()
+    new_arr /= new_arr.sum()
 
+    # Chi-square goodness of fit
     try:
         chi2, p = chisquare(new_arr, f_exp=old_arr)
         return p
-    except Exception as e:
-        print("[DRIFT] WARNING:", e, "→ fallback p=1.0")
+    except Exception:
+        # Any error → treat as no drift detected
         return 1.0

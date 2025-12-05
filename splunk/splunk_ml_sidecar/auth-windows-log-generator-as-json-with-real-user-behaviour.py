@@ -11,7 +11,7 @@ TOTAL_EVENTS = 30000
 NORMAL_USERS = ["alice", "bob", "charlie", "diana"]
 SERVICE_ACCOUNTS = ["svc-app01", "svc-app02", "svc-db", "svc-web", "svc-backup"]
 ADMINS = ["administrator", "helpdesk", "adm-john"]
-ATTACKER_USERS = ["attacker1", "attacker2"]
+FAILEDLOGIN_USERS = ["external-probe01", "test-acc-temp"]
 
 SIGNATURES = {
     4624: "An account was successfully logged on",
@@ -91,7 +91,7 @@ def generate_admin_user():
     }
 
 def generate_slow_attacker():
-    user = random.choice(ATTACKER_USERS)
+    user = random.choice(FAILEDLOGIN_USERS)
     ts = random_timestamp()
     signature = 4625  # failed logon
 

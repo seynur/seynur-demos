@@ -107,12 +107,17 @@ def extract_features(evt, user_profile):
     mean_h = prof.get("mean_hour", 12.0)
     std_h = prof.get("std_hour", 4.0) or 1.0  # Avoid zero division
 
+    # User hour deviation (Z-score)
     hour_dev = abs(hour - mean_h)
-    hour_z = hour_dev / (std_h + 0.1)         # Stabilized Z-score
+    hour_z = hour_dev / (std_h + 1e-6)
+
+    # Matches model.py logic: user_hour_score = min(z / 3.0, 1.0)
+    user_hour_score = min(hour_z / 3.0, 1.0)
 
     # ----------------------------------------------------------------------
     # 6) Final numeric vector
     # ----------------------------------------------------------------------
+
     return np.array(
         [
             hour_bin,
@@ -121,6 +126,7 @@ def extract_features(evt, user_profile):
             src_private,
             dest_private,
             hour_z,
+            user_hour_score, 
         ],
         dtype="float32",
     )

@@ -3,24 +3,19 @@
 """
 profiles.py — Behavioral Profiles for Users, Clusters, and Events
 
-This module builds the three profile structures that power the ML Sidecar’s
-KVStore exports:
+This module constructs the three profile structures written to Splunk KVStore:
 
 1) Cluster Profiles (auth_cluster_profiles)
    - Summaries of cluster-level behavior
-   - Signature distributions, private IP rates, event counts, etc.
+   - Signature distributions, private IP rates, event counts
 
 2) User Profiles (auth_user_profiles)
-   - Per-user dominant cluster, behavior confidence, and temporal statistics
+   - Per-user dominant cluster, confidence score, temporal statistics
 
 3) Event Records (auth_events)
-   - Minimal enriched event representation suitable for dashboards
+   - Compact enriched event document for dashboards
 
-Design Notes
-------------
-• Profiles are intentionally compact — suitable for KVStore usage in Splunk.
-• No model logic is present; these functions operate only on enriched events.
-• Private IP logic and timestamp parsing are handled via small helpers.
+These profiles are intentionally lightweight and used by Splunk dashboards.
 """
 
 from typing import List, Dict
@@ -38,31 +33,41 @@ from core.utils import parse_windows_time
 
 def _is_private_ip(ip: str) -> bool:
     """
-    Return True if the given IP is RFC1918 private.
+    Check whether an IP address is RFC1918 private.
+
+    Returns True for:
+        10.0.0.0/8
+        172.16.0.0/12
+        192.168.0.0/16
+
+    Returns False for invalid or empty input.
     """
     if not ip:
         return False
     try:
         return ipaddress.ip_address(ip).is_private
     except Exception:
+        # if parsing fails (corrupt IP), treat as non-private
         return False
 
 
 def _make_event_key(evt: Dict) -> str:
     """
-    Construct a stable KVStore _key for an enriched event.
+    Construct a stable KVStore `_key` for an enriched event.
 
-    Key format:
+    Format:
         <user>_<timestamp>_<cluster>
 
-    Non-alphanumeric characters are sanitized to avoid KVStore rejection.
+    • Keys must be deterministic.
+    • Illegal KVStore characters are replaced with underscores.
     """
     user = evt.get("user", "unknown")
     ts = evt.get("TimeCreated", "no_time")
     cid = evt.get("cluster_id", "na")
 
     key = f"{user}_{ts}_{cid}"
-    key = key.replace(" ", "_")
+
+    # sanitize: only allow alphanumeric, underscore, hyphen, colon, dot
     key = re.sub(r"[^A-Za-z0-9_\-:.]", "_", key)
     return key
 
@@ -73,53 +78,56 @@ def _make_event_key(evt: Dict) -> str:
 
 def build_cluster_profiles(events: List[Dict]) -> List[Dict]:
     """
-    Build behavioral summaries for each cluster_id.
+    Build aggregated behavioral summaries for each cluster_id.
 
-    Produces one KVStore record per cluster:
-        _key
-        cluster_id
-        event_count
-        user_count
-        private_ip_rate
-        signature_distribution (dict)
-        label
+    For each cluster, we compute:
+        • total events
+        • number of unique users
+        • private IP rate
+        • signature_id distribution (normalized probability)
+        • label (for dashboard display)
 
-    Notes
-    -----
-    - signature_distribution is a normalized probability distribution.
-    - private_ip_rate is the percentage of events originating from private IPs.
+    Returns:
+        List[dict] — one record per cluster_id.
     """
     if not events:
         return []
 
-    cluster_users = defaultdict(set)
-    cluster_events = defaultdict(int)
-    cluster_private = defaultdict(int)
+    # Per-cluster tracking structures
+    cluster_users = defaultdict(set)                   # unique users in cluster
+    cluster_events = defaultdict(int)                  # event count
+    cluster_private = defaultdict(int)                 # private src IP count
+
+    # signature_id histogram per cluster
     cluster_signatures = defaultdict(lambda: defaultdict(int))
 
+    # --- Aggregate counts for each cluster ---
     for e in events:
         cid = int(e.get("cluster_id", -1))
         if cid < 0:
+            # skip events without valid cluster assignment
             continue
 
         user = e.get("user", "unknown")
         src = e.get("src")
-        sig = e.get("signature") or "UNKNOWN"
+        sig_id = str(e.get("signature_id") or "0")     # ensure string key
 
         cluster_events[cid] += 1
         cluster_users[cid].add(user)
-        cluster_signatures[cid][sig] += 1
+        cluster_signatures[cid][sig_id] += 1
 
         if _is_private_ip(src):
             cluster_private[cid] += 1
 
     profiles = []
 
+    # --- Build profile for each cluster ---
     for cid in sorted(cluster_events.keys()):
         ev_count = cluster_events[cid]
         user_count = len(cluster_users[cid]) or 1
         priv_rate = cluster_private[cid] / ev_count if ev_count > 0 else 0.0
 
+        # Normalize signature distribution into probabilities
         sig_counts = cluster_signatures[cid]
         total_sig = float(sum(sig_counts.values())) or 1.0
         sig_dist = {k: v / total_sig for k, v in sig_counts.items()}
@@ -145,27 +153,15 @@ def build_cluster_profiles(events: List[Dict]) -> List[Dict]:
 
 def build_user_profiles(events: List[Dict]) -> List[Dict]:
     """
-    Build user-level behavioral profiles.
+    Build per-user behavioral profiles for dashboards and scoring.
 
-    Produced fields:
-        _key
-        user
-        dominant_cluster
-        confidence
-        mean_hour
-        std_hour
+    Extracted per user:
+        • dominant_cluster      → most frequently assigned cluster
+        • confidence            → how strongly user belongs to dominant cluster
+        • mean_hour, std_hour  → temporal login behavior model
 
-    Definitions
-    -----------
-    dominant_cluster:
-        The cluster the user hits most often.
-
-    confidence:
-        share_of_events_in_dominant_cluster = count(dominant) / total(user events)
-
-    mean_hour / std_hour:
-        Temporal behavior modeling from TimeCreated.
-        If insufficient timestamps exist, defaults are applied.
+    Returns:
+        List[dict] — one record per user.
     """
     if not events:
         return []
@@ -173,34 +169,39 @@ def build_user_profiles(events: List[Dict]) -> List[Dict]:
     user_cluster_counts = defaultdict(lambda: defaultdict(int))
     user_hours = defaultdict(list)
 
+    # --- Aggregate per-user data ---
     for e in events:
         user = e.get("user", "unknown")
         cid = int(e.get("cluster_id", -1))
+
+        # count cluster assignment
         if cid >= 0:
             user_cluster_counts[user][cid] += 1
 
-        # User temporal behavior
-        ts = e.get("TimeCreated")
-        dt = parse_windows_time(ts)
+        # extract login hour for temporal modeling
+        dt = parse_windows_time(e.get("TimeCreated"))
         if dt:
             user_hours[user].append(dt.hour)
 
     profiles = []
 
+    # --- Build user profile documents ---
     for user, c_counts in user_cluster_counts.items():
         total = sum(c_counts.values()) or 1
 
-        dominant_cluster = max(c_counts.items(), key=lambda kv: kv[1])[0]
+        # dominant cluster (highest frequency)
+        dominant_cluster = max(c_counts.items(), key=lambda x: x[1])[0]
         confidence = c_counts[dominant_cluster] / total
 
+        # temporal statistics
         hours = user_hours.get(user, [])
-        if hours:  # user has timestamp data
+        if hours:
             mean_h = float(np.mean(hours))
             std_val = float(np.std(hours)) if len(hours) > 1 else 1.0
-            std_h = std_val if std_val > 0 else 1.0
-        else:  # fallback defaults
-            mean_h = 12.0
-            std_h = 4.0
+            std_h = max(std_val, 1.0)  # avoid std = 0
+        else:
+            # fallback values for users with 0 timestamped events
+            mean_h, std_h = 12.0, 4.0
 
         profiles.append(
             {
@@ -217,51 +218,53 @@ def build_user_profiles(events: List[Dict]) -> List[Dict]:
 
 
 # ============================================================================
-# Event Records (Minimal KVStore Export)
+# Event Records
 # ============================================================================
 
 def build_event_records(events: List[Dict]) -> List[Dict]:
     """
-    Produce KVStore-ready, minimal enriched event documents.
+    Build minimal-enriched event records for KVStore.
 
-    Useful for dashboards because:
-        • Very small footprint per event
-        • Stable _key
-        • Contains only fields visualizations need
+    These entries are used directly by dashboards and should remain compact.
 
-    Output fields:
-        _key
-        TimeCreated
-        user
-        src
-        dest
-        src_user
-        signature_id
-        signature
-        action
-        cluster_id
-        final_anomaly_score
-        behavior_outlier
+    Output fields include:
+        • metadata fields (TimeCreated, user, src, dest, etc.)
+        • model outputs (cluster_id, rarity scores, anomaly score)
+        • behavior_outlier flag
+
+    Returns:
+        List[dict] — one record per event.
     """
     records = []
 
     for e in events:
         rec = {
-            "_key": _make_event_key(e),
+            "_key": _make_event_key(e),                    # deterministic KV key
             "TimeCreated": e.get("TimeCreated"),
             "user": e.get("user"),
             "src": e.get("src"),
             "dest": e.get("dest"),
             "src_user": e.get("src_user"),
+
+            # Windows authentication metadata
             "signature_id": e.get("signature_id"),
-            "signature": e.get("signature"),
+            "signature": e.get("signature"),               # used for dashboards
             "action": e.get("action"),
-            "cluster_id": int(e.get("cluster_id", -1))
-            if e.get("cluster_id") is not None
-            else -1,
+
+            # cluster assignment
+            "cluster_id": int(e.get("cluster_id", -1)),
+
+            # anomaly model outputs
+            "outlier_score": float(e.get("outlier_score", 0.0)),
+            "cluster_rarity": float(e.get("cluster_rarity", 0.0)),
+            "signature_rarity": float(e.get("signature_rarity", 0.0)),
+            "user_hour_score": float(e.get("user_hour_score", 0.0)),
             "final_anomaly_score": float(e.get("final_anomaly_score", 0.0)),
+
+            # binary classification: above threshold?
             "behavior_outlier": int(e.get("behavior_outlier", 0)),
         }
+
         records.append(rec)
 
     return records

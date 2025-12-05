@@ -5,10 +5,10 @@ kvstore.py — Splunk KVStore export utilities.
 
 This module implements a high-performance batch writer for Splunk KVStore.
 Typical use cases:
-    • Persist model output (events)  
-    • Store cluster profiles  
-    • Store user profiles  
-    • Store dynamic daily thresholds  
+- Persist model output (events)  
+- Store cluster profiles  
+- Store user profiles  
+- Store dynamic daily thresholds  
 
 KVStore REST Endpoints used:
     DELETE  /storage/collections/data/<collection>

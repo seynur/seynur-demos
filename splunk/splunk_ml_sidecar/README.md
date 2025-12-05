@@ -1,4 +1,4 @@
-# `splunk_ml_sidecar` — Repository Overview
+# `splunk_ml_sidecar` — Repository Overview
 
 This repository contains a full behavioral analytics pipeline (“ML Sidecar”) for Splunk, together with a Splunk app that provides dashboards and KVStore-backed lookups for visualizing the results.
 
@@ -98,9 +98,6 @@ you will find full JSON dashboards for:
 - Final score heatmaps
 
 The dashboards are powered entirely by KVStore lookups updated by the ML sidecar.
-
-See:
-👉 `splunk_ml_sidecar_app/README.md`
 
 ---
 

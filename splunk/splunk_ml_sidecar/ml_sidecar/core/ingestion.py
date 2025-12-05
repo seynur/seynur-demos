@@ -7,10 +7,10 @@ This module provides a single function:
     load_splunk_events(conf)
 
 Which:
-    • Executes a Splunk REST search/jobs/export request  
-    • Streams JSON events  
-    • Parses both JSON-encoded _raw fields and structured SPL results  
-    • Returns Python dictionaries for ML processing  
+    - Executes a Splunk REST search/jobs/export request  
+    - Streams JSON events  
+    - Parses both JSON-encoded _raw fields and structured SPL results  
+    - Returns Python dictionaries for ML processing  
 
 Notes:
     - This uses Splunk's streaming export API which does not create a job.
