@@ -9,7 +9,7 @@ services:
       SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
       SPLUNK_PASSWORD: "admin123"
     ports:
-      - "8000:8000"    # CM Web
+      - "8000:8000"    # CM Web UI
       - "8089:8089"    # CM Management port
     volumes:
       - cm-etc:/opt/splunk/etc
@@ -61,7 +61,7 @@ services:
       SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
       SPLUNK_PASSWORD: "admin123"
     ports:
-      - "9000:8000"    # SH1 Web
+      - "9000:8000"    # SH1 Web UI
       - "9089:8089"    # SH1 Management port
     volumes:
       - sh1-etc:/opt/splunk/etc
@@ -79,7 +79,7 @@ services:
       SPLUNK_GENERAL_TERMS: "--accept-sgt-current-at-splunk-com"
       SPLUNK_PASSWORD: "admin123"
     ports:
-      - "9001:8000"    # SH2 Web
+      - "9001:8000"    # SH2 Web UI
       - "9189:8089"    # SH2 Management port
     volumes:
       - sh2-etc:/opt/splunk/etc
