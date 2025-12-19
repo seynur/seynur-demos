@@ -44,11 +44,12 @@ ingestion:
 
   # Splunk REST API access details
   splunk:
+    # Example : "https://127.0.0.1:8089"
     base_url: "<base-url>"
 
     # IMPORTANT:
     #   For production use:
-    #       auth_token: "${SPLUNK_TOKEN}"
+    #       auth_token: ${SPLUNK_TOKEN}
     #   Instead of storing the JWT directly inside the YAML.
     auth_token: <splunk bearer token for inputs>
 
@@ -82,11 +83,12 @@ output:
   splunk_kvstore:
     enabled: true
 
+    # Example : "https://127.0.0.1:8089"
     base_url: "<base-url>"
 
     # Again — recommend using environment variables in production. 
     # Note : This Splunk can be different from ingestion.splunk.auth_token
-    auth_token: <splunk bearer token for results>
+    auth_token: <splunk bearer token for inputs>
 
     # Splunk App Name that contains the KVStore collections
     app: "ml_sidecar_app"

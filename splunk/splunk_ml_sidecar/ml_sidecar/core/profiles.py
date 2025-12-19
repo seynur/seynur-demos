@@ -268,3 +268,57 @@ def build_event_records(events: List[Dict]) -> List[Dict]:
         records.append(rec)
 
     return records
+
+# ============================================================================
+# Event Records
+# ============================================================================
+
+def build_outlier_event_records(events: List[Dict]) -> List[Dict]:
+    """
+    Build minimal-enriched event records for KVStore.
+
+    These entries are used directly by dashboards and should remain compact.
+
+    Output fields include:
+        • metadata fields (TimeCreated, user, src, dest, etc.)
+        • model outputs (cluster_id, rarity scores, anomaly score)
+        • behavior_outlier flag
+
+    Returns:
+        List[dict] — one record per event.
+    """
+    records = []
+
+    
+    for e in events:
+        if e.get("behavior_outlier", 0) == 1:
+            rec = {
+                "_key": _make_event_key(e),                    # deterministic KV key
+                "TimeCreated": e.get("TimeCreated"),
+                "user": e.get("user"),
+                "src": e.get("src"),
+                "dest": e.get("dest"),
+                "src_user": e.get("src_user"),
+
+                # Windows authentication metadata
+                "signature_id": e.get("signature_id"),
+                "signature": e.get("signature"),               # used for dashboards
+                "action": e.get("action"),
+
+                # cluster assignment
+                "cluster_id": int(e.get("cluster_id", -1)),
+
+                # anomaly model outputs
+                "outlier_score": float(e.get("outlier_score", 0.0)),
+                "cluster_rarity": float(e.get("cluster_rarity", 0.0)),
+                "signature_rarity": float(e.get("signature_rarity", 0.0)),
+                "user_hour_score": float(e.get("user_hour_score", 0.0)),
+                "final_anomaly_score": float(e.get("final_anomaly_score", 0.0)),
+
+                # binary classification: above threshold?
+                "behavior_outlier": int(e.get("behavior_outlier", 0)),
+            }
+
+            records.append(rec)
+
+    return records

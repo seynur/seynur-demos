@@ -38,6 +38,7 @@ from .profiles import (
     build_cluster_profiles,
     build_user_profiles,
     build_event_records,
+    build_outlier_event_records,
 )
 from .kvstore import write_kvstore_collection
 
@@ -191,6 +192,7 @@ def run_auto_pipeline():
         t = float(np.quantile(scores, outlier_percentile))
         user_thresholds[user] = t
 
+    a = []
     # Apply final outlier decision
     for e in enriched:
         user = e.get("user", "unknown")
@@ -223,6 +225,7 @@ def run_auto_pipeline():
     cluster_profiles = build_cluster_profiles(enriched)
     user_profiles = build_user_profiles(enriched)
     event_records = build_event_records(enriched)
+    outlier_event_records = build_outlier_event_records(enriched)
 
     # Show example event for debugging
     if event_records:
@@ -249,19 +252,7 @@ def run_auto_pipeline():
     write_kvstore_collection(cluster_profiles, base_url, token, app, "auth_cluster_profiles")
     write_kvstore_collection(user_profiles, base_url, token, app, "auth_user_profiles")
     write_kvstore_collection(event_records, base_url, token, app, "auth_events")
-
-    # Daily threshold tracking (useful for dashboards + diagnostics)
-    today = datetime.utcnow().date().isoformat()
-    threshold_doc = [{
-        "_key": today,
-        "date": today,
-        "threshold": float(threshold),
-        "percentile": float(outlier_percentile),
-        "event_count": len(scores),
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-    }]
-
-    write_kvstore_collection(threshold_doc, base_url, token, app, "auth_thresholds")
+    # write_kvstore_collection(outlier_event_records, base_url, token, app, "auth_outlier_events")
 
     print("=== Auto-Pipeline Completed Successfully ===")
     return enriched
