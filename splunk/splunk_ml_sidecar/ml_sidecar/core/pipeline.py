@@ -151,26 +151,28 @@ def run_auto_pipeline():
     enriched = predict((model, scaler, meta), events)
 
     # ----------------------------------------------------------------------
-    # 7) PER-USER NORMALIZATION + THRESHOLDING (NEW LOGIC)
+    # 7) PER-USER NORMALIZATION + THRESHOLDING
     # ----------------------------------------------------------------------
     print("[AUTO] Applying per-user normalization…")
 
-    # Build user → score list
-    user_scores = {}
+    # 1) Collect per-user raw final scores
+    user_raw_scores = {}
     for e in enriched:
         user = e.get("user", "unknown")
-        score = float(e.get("final_anomaly_score", 0.0))
-        user_scores.setdefault(user, []).append(score)
+        user_raw_scores.setdefault(user, []).append(
+            float(e.get("final_anomaly_score", 0.0))
+        )
 
-    # Compute per-user mean & std
+    # 2) Compute per-user mean/std for z-score
     user_stats = {}
-    for user, scores in user_scores.items():
+    for user, scores in user_raw_scores.items():
         mean_u = float(np.mean(scores))
         std_u = float(np.std(scores))
-        std_u = std_u if std_u > 0.1 else 0.1  # prevent division-by-zero
+        std_u = std_u if std_u > 0.1 else 0.1  # avoid division-by-zero / tiny std
         user_stats[user] = (mean_u, std_u)
 
-    # Compute per-user z-score and sigmoid normalizations
+    # 3) Compute per-event per_user_zscore and per_user_norm_score (sigmoid)
+    user_norm_scores = {}  # store per-user norm_score list (for threshold)
     for e in enriched:
         user = e.get("user", "unknown")
         score = float(e.get("final_anomaly_score", 0.0))
@@ -178,29 +180,29 @@ def run_auto_pipeline():
         mean_u, std_u = user_stats.get(user, (0.5, 0.2))
         z = (score - mean_u) / std_u
 
-        # Sigmoid for 0–1 normalization
+        # Sigmoid maps (-inf, +inf) => (0,1)
         norm_score = 1.0 / (1.0 + np.exp(-z))
 
         e["per_user_zscore"] = float(z)
         e["per_user_norm_score"] = float(norm_score)
 
-    # Compute per-user outlier thresholds (99th percentile)
-    print("[AUTO] Computing per-user thresholds…")
+        user_norm_scores.setdefault(user, []).append(float(norm_score))
 
-    user_thresholds = {}
-    for user, scores in user_scores.items():
-        t = float(np.quantile(scores, outlier_percentile))
-        user_thresholds[user] = t
+    # 4) Compute per-user thresholds on *normalized* scores (recommended)
+    print("[AUTO] Computing per-user thresholds (on per_user_norm_score)…")
+    user_thresholds_norm = {}
+    for user, nscores in user_norm_scores.items():
+        t = float(np.quantile(nscores, outlier_percentile))
+        user_thresholds_norm[user] = t
 
-    a = []
-    # Apply final outlier decision
+    # 5) Apply per-user outlier decision (normalized score)
     for e in enriched:
         user = e.get("user", "unknown")
-        score = float(e.get("final_anomaly_score", 0.0))
-        threshold_u = user_thresholds.get(user, 1.0)
+        norm_score = float(e.get("per_user_norm_score", 0.0))
+        threshold_norm = float(user_thresholds_norm.get(user, 1.0))
 
-        e["per_user_threshold"] = threshold_u
-        e["behavior_outlier"] = int(score >= threshold_u)
+        e["per_user_threshold_norm"] = threshold_norm
+        e["behavior_outlier_user"] = int(norm_score >= threshold_norm)
 
     print("[AUTO] Per-user anomaly detection complete.")
 
@@ -208,15 +210,115 @@ def run_auto_pipeline():
     # 8) DYNAMIC OUTLIER THRESHOLDING
     # ----------------------------------------------------------------------
     # Collect final_anomaly_score values for percentile thresholding
+
+    # Compute global threshold
     scores = [e.get("final_anomaly_score", 0.0) for e in enriched]
+    global_threshold = float(np.quantile(scores, outlier_percentile)) if scores else 1.0
 
-    # Compute threshold based on percentile
-    threshold = float(np.quantile(scores, outlier_percentile)) if scores else 1.0
-    print(f"[AUTO] Behavior threshold (percentile={outlier_percentile}) = {threshold:.4f}")
+    # ----------------------------------------------------------------------
+    # 8.5) CLUSTER-BASED OUTLIER THRESHOLDING
+    # ----------------------------------------------------------------------
+    from collections import defaultdict
 
-    # Apply outlier flag
+    cluster_scores = defaultdict(list)
+
     for e in enriched:
-        e["behavior_outlier"] = int(e["final_anomaly_score"] >= threshold)
+        cluster_scores[e["cluster_id"]].append(
+            float(e.get("final_anomaly_score", 0.0))
+        )
+
+    MIN_CLUSTER_EVENTS = modeling_cfg.get("min_cluster_events", 30)
+
+    cluster_thresholds = {
+        cid: float(np.quantile(scores, outlier_percentile))
+        for cid, scores in cluster_scores.items()
+        if len(scores) >= MIN_CLUSTER_EVENTS
+    }
+
+    print(f"[AUTO] Computed {len(cluster_thresholds)} cluster-specific thresholds")
+
+    # Apply cluster outlier decision
+    for e in enriched:
+        cid = e.get("cluster_id")
+        threshold_c = cluster_thresholds.get(cid, global_threshold)
+
+        e["cluster_threshold"] = threshold_c
+        e["behavior_outlier_cluster"] = int(
+            e.get("final_anomaly_score", 0.0) >= threshold_c
+        )
+
+
+    print(f"[AUTO] Global behavior threshold (p={outlier_percentile}) = {global_threshold:.4f}")
+
+    # Apply global outlier decision
+    for e in enriched:
+        e["behavior_outlier_global"] = int(
+            e.get("final_anomaly_score", 0.0) >= global_threshold
+        )
+
+    VALID_MODES = {"user", "cluster", "global", "combined"}
+
+    # Final outlier decision (user/global/combined)
+    outlier_mode = modeling_cfg.get("outlier_mode", "combined").lower()
+    combined_mode = modeling_cfg.get("combined_logic", "and").lower()
+
+    if outlier_mode not in VALID_MODES:
+        raise ValueError(f"Invalid outlier_mode: {outlier_mode}")
+    
+    elif outlier_mode == "combined":
+        threshold_cfg = modeling_cfg.get("thresholds", {})
+
+        use_user = threshold_cfg.get("enable_user", True)
+        use_cluster = threshold_cfg.get("enable_cluster", True)
+        use_global = threshold_cfg.get("enable_global", True)
+
+    for e in enriched:
+
+        # ------------------------------
+        # Non-combined modes (direct)
+        # ------------------------------
+        if outlier_mode != "combined":
+            e["behavior_outlier"] = int(e.get(f"behavior_outlier_{outlier_mode}", 0))
+            e["outlier_decision_source"] = outlier_mode
+            continue
+
+        # ------------------------------
+        # Combined mode
+        # ------------------------------
+        decisions = []
+
+        if use_user:
+            decisions.append(int(e.get("behavior_outlier_user", 0)))
+
+        if use_cluster:
+            decisions.append(int(e.get("behavior_outlier_cluster", 0)))
+
+        if use_global:
+            decisions.append(int(e.get("behavior_outlier_global", 0)))
+
+        # Safety: no threshold enabled → never alert
+        if not decisions:
+            e["behavior_outlier"] = 0
+            e["outlier_decision_source"] = "combined_none"
+            continue
+
+        if combined_mode == "or":
+            e["behavior_outlier"] = int(any(decisions))
+            e["outlier_decision_source"] = "combined_or"
+        else:
+            e["behavior_outlier"] = int(all(decisions))
+            e["outlier_decision_source"] = "combined_and"
+
+
+    # Logging
+    if outlier_mode == "combined":
+        print(
+            f"[AUTO] Outlier mode = combined ({combined_mode}) | "
+            f"user={use_user}, cluster={use_cluster}, global={use_global}"
+        )
+    else:
+        print(f"[AUTO] Outlier mode = {outlier_mode}")
+
 
     # ----------------------------------------------------------------------
     # 9) PROFILE GENERATION (CLUSTER / USER / EVENT)
@@ -233,7 +335,28 @@ def run_auto_pipeline():
         print(json.dumps(event_records[0], indent=2))
 
     # ----------------------------------------------------------------------
-    # 10) EXPORT TO SPLUNK KVSTORE
+    # 10) THRESHOLD INFORMATION (GLOBAL & USER)
+    # ----------------------------------------------------------------------
+
+    today = datetime.utcnow().date().isoformat()
+
+    # Build per-user threshold docs (normalized threshold)
+    user_threshold_docs = []
+    for user, t in user_thresholds_norm.items():
+        user_threshold_docs.append({
+            "_key": f"{today}_{user}",
+            "date": today,
+            "threshold_global": float(global_threshold),
+            "global_event_count": int(len(scores)),
+            "outlier_decision_source": e["outlier_decision_source"],
+            "user": user,
+            "threshold_user_norm": float(t),
+            "percentile": float(outlier_percentile),
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        })
+
+    # ----------------------------------------------------------------------
+    # 11) EXPORT TO SPLUNK KVSTORE
     # ----------------------------------------------------------------------
     kv_cfg = cfg["output"].get("splunk_kvstore", {})
 
@@ -252,7 +375,14 @@ def run_auto_pipeline():
     write_kvstore_collection(cluster_profiles, base_url, token, app, "auth_cluster_profiles")
     write_kvstore_collection(user_profiles, base_url, token, app, "auth_user_profiles")
     write_kvstore_collection(event_records, base_url, token, app, "auth_events")
-    # write_kvstore_collection(outlier_event_records, base_url, token, app, "auth_outlier_events")
+
+    # Per-user thresholds with global threshold (daily, one doc per user)
+    write_kvstore_collection(user_threshold_docs, base_url, token, app, "auth_user_thresholds")
+
+    # Optional: export only outlier events collection
+    if modeling_cfg.get("export_outlier_events", False):
+        write_kvstore_collection(outlier_event_records, base_url, token, app, "auth_outlier_events")
+
 
     print("=== Auto-Pipeline Completed Successfully ===")
     return enriched

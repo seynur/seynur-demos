@@ -24,21 +24,16 @@ general:
   # Base name for KMeans model files
   model_name: "auth_kmeans_v1"
 
-  # Global drift threshold for model retraining (p-value)
-  drift_threshold: 0.05
-
-
 # -----------------------------------------------------------------------------
 # INGESTION SETTINGS (SPLUNK REST API)
 # -----------------------------------------------------------------------------
 ingestion:
-  source_type: "splunk_rest"
-
   # Query for fetching authentication logs
   query: 'index = ml_sidecar sourcetype = ml:sidecar:json'
 
 
   # Time window for Splunk data ingestion
+  # Example -> earliest: "-24h"
   earliest: "-90d"
   latest: "now"
 
@@ -67,9 +62,22 @@ modeling:
   # Ensure reproducibility
   random_state: 42
 
-  # Secondary drift threshold (training override)
+  # Global drift threshold for model retraining (p-value)
   drift_threshold: 0.05
+  outlier_percentile: 0.95
 
+  # Decide final outlier flag based on mode  
+  outlier_mode: "combined"   # Options -> "user" | "cluster" | "global" | "combined"
+
+  # Threshold sources used when outlier_mode = combined
+  combined_logic: "and" # Options -> "and" | "or"
+  thresholds:
+    enable_user: true
+    enable_cluster: true
+    enable_global: false
+  
+  # Decide exporting outlier events
+  export_outlier_events: true
 
 # -----------------------------------------------------------------------------
 # OUTPUT SETTINGS
@@ -83,7 +91,7 @@ output:
   splunk_kvstore:
     enabled: true
 
-    # Example : "https://127.0.0.1:8089"
+    # Example -> "https://127.0.0.1:8089"
     base_url: "<base-url>"
 
     # Again — recommend using environment variables in production. 

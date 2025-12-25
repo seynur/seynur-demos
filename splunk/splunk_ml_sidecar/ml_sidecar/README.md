@@ -28,10 +28,12 @@ Core capabilities:
 - REST ingestion from Splunk Search
 - Feature extraction & normalization
 - Adaptive KMeans clustering (auto-K)
-- 4-layer anomaly scoring
+- Multi-layer anomaly scoring
+- Per-user & global thresholding
+- Configurable outlier decision logic
 - Drift detection & auto-retraining
-- Exporting to multiple KVStore collections
-- Support for dashboards, alerts, and investigations
+- Export to multiple KVStore collections
+- Designed for dashboards, alerts, and investigations
 
 The ML pipeline never writes to indexes — only to KVStore.
 
@@ -42,21 +44,23 @@ The ML pipeline never writes to indexes — only to KVStore.
                            └────────────────────────────────────────┘
                                           │
                                           ▼
-                         "Authentication Events" (4624,4625,4672,..)
+                         Windows Authentication Events
+                     (4624, 4625, 4672, Kerberos, NTLM, ...)
                                           │
                                           ▼
                           ┌────────────────────────────────────┐
                           │     2) FEATURE EXTRACTION          │
                           └────────────────────────────────────┘
                                           │
-    ┌───────────────────────────────────────────────────────────────────────────────┐
-    │ Extracted features:                                                           │
-    │  • hour, day_of_week                                                          │
-    │  • signature_id                                                               │
-    │  • is_private_ip                                                              │
-    │  • src subnet / dest subnet                                                   │
-    │  • user_hour_zscore (hour-mean)/std                                           │
-    └───────────────────────────────────────────────────────────────────────────────┘
+ ┌───────────────────────────────────────────────────────────────────────────────┐
+ │ Extracted & derived features:                                                 │
+ │  • hour, day_of_week                                                          │
+ │  • signature_id                                                               │
+ │  • action (success / failure)                                                 │
+ │  • is_private_ip                                                              │
+ │  • src subnet / dest subnet                                                   │
+ │  • per-user temporal statistics (mean/std)                                    │
+ └───────────────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
                            ┌────────────────────────────────────────┐
@@ -68,34 +72,36 @@ The ML pipeline never writes to indexes — only to KVStore.
                      │     4) KMEANS CLUSTERING (AUTO-K)           │
                      └─────────────────────────────────────────────┘
                                           │
-                                          ▼
-               ┌───────────────────────────────────────────────────────────────┐
-               │ TRY K ∈ {6, 8, 10, 12, 14}                                     │
-               │ For each K:                                                   │
-               │    • Fit KMeans                                               │
-               │    • Calculate silhouette score                               │
-               │ Select best K                                                 │
-               └───────────────────────────────────────────────────────────────┘
+ ┌───────────────────────────────────────────────────────────────────────────────┐
+ │ Auto-K selection                                                              │
+ │  TRY K ∈ {6, 8, 10, 12, 14}                                                   │
+ │   • Train KMeans                                                              │
+ │   • Compute silhouette score                                                  │
+ │   • Reject collapsed clusters                                                 │
+ │   • Select best K                                                             │
+ └───────────────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
                 ┌────────────────────────────────────────────────┐
-                │ 5) RAW OUTLIER SCORE ( CENTROID DISTANCE)      │
+                │ 5) RAW OUTLIER SCORE (CENTROID DISTANCE)       │
                 └────────────────────────────────────────────────┘
                                           │
                                           ▼
                      ┌─────────────────────────────────────────────────────────┐
-                     │ 6) BEHAVIOR ANALYSIS (3 SUPPORTING RARITY SCORES)       │
+                     │ 6) CONTEXTUAL BEHAVIOR SCORING                          │
                      └─────────────────────────────────────────────────────────┘
                                           │
  ┌────────────────────────────────────────────────────────────────────────────────┐
- │ SUPPORT SCORE #1 → cluster_rarity                                              │
+ │ Supporting behavioral signals                                                  │
+ │                                                                                │
+ │ 1. cluster_rarity                                                              │
  │    = 1 − freq(user, cluster) / total(user events)                              │
  │                                                                                │
- │ SUPPORT SCORE #2 → signature_rarity                                            │
- │    = 1 − P(signature | cluster)                                                │
+ │ 2. signature_rarity                                                            │
+ │    = 1 − P(signature_id | cluster)                                             │
  │                                                                                │
- │ SUPPORT SCORE #3 → user_hour_score (Z-score)                                   │
- │    = min(|hour - mean_hour| / std_hour , 1)                                    │
+ │ 3. user_hour_score                                                             │
+ │    = min(|hour − mean_hour| / std_hour , 1)                                    │
  └────────────────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
@@ -103,54 +109,83 @@ The ML pipeline never writes to indexes — only to KVStore.
                       │   7) FINAL ANOMALY SCORE (WEIGHTED)        │
                       └────────────────────────────────────────────┘
                                           │
+ ┌───────────────────────────────────────────────────────────────────────────────┐
+ │ final_anomaly_score =                                                         │
+ │   0.4 * raw_outlier_score                                                     │
+ │ + 0.3 * cluster_rarity                                                        │
+ │ + 0.2 * signature_rarity                                                      │
+ │ + 0.1 * user_hour_score                                                       │
+ └───────────────────────────────────────────────────────────────────────────────┘
+                                          │
                                           ▼
-   ┌───────────────────────────────────────────────────────────────────────────────┐
-   │ final_anomaly_score =                                                         │
-   │   0.4 * outlier_score                                                         │
-   │ + 0.3 * cluster_rarity                                                        │
-   │ + 0.2 * signature_rarity                                                      │
-   │ + 0.1 * user_hour_score                                                       │
-   │                                                                               │
-   │ behavior_outlier = (final_score ≥ 0.8 ? 1 : 0)                                │
-   └───────────────────────────────────────────────────────────────────────────────┘
+                ┌────────────────────────────────────────────────┐
+                │ 8) PER-USER NORMALIZATION                      │
+                └────────────────────────────────────────────────┘
+                                          │
+ ┌────────────────────────────────────────────────────────────────────────────────┐
+ │ For each user:                                                                 │
+ │  • Compute mean & std of final_anomaly_score                                   │
+ │  • Calculate per_user_zscore                                                   │
+ │  • Apply sigmoid → per_user_norm_score ∈ [0,1]                                 │
+ │  • Derive per-user threshold (percentile-based)                                │
+ └────────────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+                ┌────────────────────────────────────────────────┐
+                │ 9) GLOBAL THRESHOLDING                         │
+                └────────────────────────────────────────────────┘
+                                          │
+                Compute global threshold on final_anomaly_score
+                         (percentile-based, daily)
+                                          │
+                                          ▼
+                ┌────────────────────────────────────────────────┐
+                │ 10) FINAL OUTLIER DECISION LOGIC               │
+                └────────────────────────────────────────────────┘
+                                          │
+ ┌────────────────────────────────────────────────────────────────────────────────┐
+ │ Configurable via settings.yaml                                                 │
+ │                                                                                │
+ │ outlier_mode = user | global | combined                                        │
+ │ combined_logic = and | or                                                      │
+ │                                                                                │
+ │ behavior_outlier                                                               │
+ │  • user      → per-user only                                                   │
+ │  • global    → global only                                                     │
+ │  • combined  → user AND/OR global                                              │
+ │                                                                                │
+ │ outlier_decision_source = user | global | combined_and | combined_or           │
+ └────────────────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
                   ┌────────────────────────────────────────────────┐
-                  │           8) DRIFT DETECTION                   │
+                  │ 11) DRIFT DETECTION                            │
                   └────────────────────────────────────────────────┘
                                           │
                               Compare cluster_dist(old vs new)
                                           │
                             Chi-Square p-value < threshold ?
-                               YES → Retrain model
-                               NO  → Keep model
+                              YES → Retrain model
+                              NO  → Keep model
                                           │
                                           ▼
-       ┌───────────────────────────────────────────────────────────────────────────┐
-       │              9) RESULT EXPORT → 3 KVSTORE COLLECTIONS                     │
-       └───────────────────────────────────────────────────────────────────────────┘
+          ┌────────────────────────────────────────────────────────────────────┐
+          │ 12) EXPORT RESULTS → KVSTORE COLLECTIONS                           │
+          └────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
-  ┌───────────────────────────────────┬──────────────────────────────┬────────────────────────────┐
-  │ auth_events                       │ auth_user_profiles           │ auth_cluster_profiles      │
-  │ (event-level enriched records)    │ (user behavior model)        │ (cluster-level summaries)  │
-  └───────────────────────────────────┴──────────────────────────────┴────────────────────────────┘
+ ┌──────────────────────────────┬──────────────────────────────┬──────────────────────────────┐
+ │ auth_events                  │ auth_user_profiles           │ auth_cluster_profiles        │
+ │ event-level enriched data    │ per-user behavior models     │ cluster summaries            │
+ ├──────────────────────────────┼──────────────────────────────┼──────────────────────────────┤
+ │ auth_user_thresholds         │ auth_outlier_events (opt.)   │                              │
+ │ per-user + global thresholds │ only outlier events          │                              │
+ └──────────────────────────────┴──────────────────────────────┴──────────────────────────────┘
                                           │
                                           ▼
                      ┌────────────────────────────────────────────┐
-                     │       10) SPLUNK DASHBOARDS                │
+                     │       SPLUNK DASHBOARDS & ALERTS           │
                      └────────────────────────────────────────────┘
-                                          │
-                                          ▼
-   ┌───────────────────────────────────────────────────────────────────────────────┐
-   │  DASHBOARD VIEWS                                                              │
-   │  - User Behavior Explorer                                                     │
-   │  - Cluster Behavior Analyzer                                                  │
-   │  - Anomaly Explorer (Top Outliers)                                            │
-   │  - Entropy-based risk panel                                                   │
-   │  - Final Score Trend Heatmap                                                  │
-   │  - Signature Distribution Charts                                              │
-   └───────────────────────────────────────────────────────────────────────────────┘
 
 ```
 
@@ -170,45 +205,57 @@ index=wineventlog EventCode IN (4624,4625,4634,4672,4768,4769)
 # 2. Directory Structure (Engine Only)
 
 ```
-Splunk Search → ML Sidecar (Python) → KMeans → Anomaly Scores
-                                      ↓
-                             KVStore Collections
-                                      ↓
-                           Splunk Dashboards & Alerts
+Splunk Search
+      ↓
+ML Sidecar (Python Engine)
+      ↓
+Behavioral Modeling & Anomaly Detection
+      ↓
+KVStore Collections
+      ↓
+Splunk Dashboards & Alerts
 ```
+
 Pipeline works as a “sidecar”:
-Gets Splunk logs → processes → writes back to Splunk.
+- Reads authentication data from Splunk via REST
+- Performs all ML computation externally
+- Writes only enriched results back to Splunk KVStore
+- Never modifies indexed data
+
 
 ```
 ml_sidecar/
 │
 ├── config/
-│   └── settings.yaml
+│   └── settings.yaml          # All runtime configuration
 │
 ├── core/
-│   ├── config_loader.py
-│   ├── ingestion.py
-│   ├── features.py
-│   ├── model.py
-│   ├── pipeline.py
-│   ├── profiles.py
-│   ├── kvstore.py
-│   └── utils.py
+│   ├── config_loader.py       # YAML loader & validation
+│   ├── ingestion.py           # Splunk REST ingestion
+│   ├── features.py            # Feature extraction & encoding
+│   ├── model.py               # Training, inference, drift detection
+│   ├── pipeline.py            # End-to-end orchestration
+│   ├── profiles.py            # User / cluster / event profiles
+│   ├── kvstore.py             # KVStore export logic
+│   └── utils.py               # Shared helpers
 │
 ├── models/
-│   └── <trained models .pkl/.json>
+│   └── <trained model artifacts>
+│       ├── model.pkl
+│       ├── scaler.pkl
+│       └── meta.json
 │
-├── run_auto.py
-└── README.md  ← this file
+├── run_auto.py                # Entry point
+└── README.md                  # This file
 ```
 
 Each module serves a clear responsibility:
-- ingestion.py → Splunk → Python
-- features.py → Convert raw event → ML feature vector
-- model.py → training, loading, scoring, drift detection
-- profiles.py → build cluster/user/event profiles
-- kvstore.py → exporting enriched output to Splunk
-- pipeline.py → main orchestration logic
+- `ingestion.py` → Splunk REST export → Python dict events
+- `features.py` → raw event → numeric feature vector
+- `model.py` → train/load KMeans + scaler, scoring, drift detection, metadata
+- `pipeline.py` → orchestration (ingest → train/load → drift → predict → thresholds → export)
+- `profiles.py` → build dashboard-friendly cluster/user/event records
+- `kvstore.py` → KVStore delete + batch_save writes
 
 ---
 
@@ -216,37 +263,112 @@ Each module serves a clear responsibility:
 
 All runtime behavior is driven by this file.
 
+Key sections:
+- `general` → model path/name
+- `ingestion` → search query + time window + Splunk REST details
+- `modeling` → algorithm, k_candidates, drift threshold, outlier decision logic
+- `output.splunk_kvstore` → KVStore write target
+
 Example:
 
 ```
+# =============================================================================
+# ML SIDECAR — MASTER CONFIGURATION FILE
+# =============================================================================
+# This file defines:
+#   - Model directory / name
+#   - Splunk ingestion settings
+#   - Modeling parameters
+#   - Output destinations (Splunk KVStore)
+#
+# NOTES:
+#   • Do NOT check real Splunk tokens into Git. Use environment variables instead.
+#   • Time ranges follow Splunk syntax (e.g., -24h, -30d, now)
+#   • All paths are relative to the ml_sidecar working directory
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# GENERAL MODEL SETTINGS
+# -----------------------------------------------------------------------------
 general:
+  # Directory where model .pkl and metadata .json will be stored
   model_dir: "./models"
+
+  # Base name for KMeans model files
   model_name: "auth_kmeans_v1"
-  drift_threshold: 0.05
 
+# -----------------------------------------------------------------------------
+# INGESTION SETTINGS (SPLUNK REST API)
+# -----------------------------------------------------------------------------
 ingestion:
-  source_type: "splunk_rest"
-  query: 'index=generic_index source="*20251120-win-synth-auth-as-json2.log"'
-  earliest: "-365d"
-  latest: "now"
-  splunk:
-    base_url: "<base-url>"
-    auth_token: "<input-token>"
+  # Query for fetching authentication logs
+  query: 'index = ml_sidecar sourcetype = ml:sidecar:json'
 
+
+  # Time window for Splunk data ingestion
+  # Example -> earliest: "-24h"
+  earliest: "-90d"
+  latest: "now"
+
+  # Splunk REST API access details
+  splunk:
+    # Example : "https://127.0.0.1:8089"
+    base_url: "<base-url>"
+
+    # IMPORTANT:
+    #   For production use:
+    #       auth_token: ${SPLUNK_TOKEN}
+    #   Instead of storing the JWT directly inside the YAML.
+    auth_token: <splunk bearer token for inputs>
+
+
+
+# -----------------------------------------------------------------------------
+# MODELING SETTINGS
+# -----------------------------------------------------------------------------
 modeling:
   algorithm: "kmeans"
+
+  # Candidate K values used for silhouette-based selection
   k_candidates: [6, 8, 10, 12, 14]
+
+  # Ensure reproducibility
   random_state: 42
+
+  # Global drift threshold for model retraining (p-value)
   drift_threshold: 0.05
 
+  # Decide final outlier flag based on mode  
+  outlier_mode: "combined"   # Options -> "user" | "global" | "combined"
+  combined_logic: "and" # Options -> "and" | "or"
+
+  # Decide exporting outlier events
+  export_outlier_events: true
+
+# -----------------------------------------------------------------------------
+# OUTPUT SETTINGS
+# -----------------------------------------------------------------------------
 output:
+  # Only exporting to KVStore in this configuration
   writers:
     - "splunk_kvstore"
+
+  # Splunk KVStore export configuration
   splunk_kvstore:
     enabled: true
+
+    # Example -> "https://127.0.0.1:8089"
     base_url: "<base-url>"
-    auth_token: "<output-token>"
+
+    # Again — recommend using environment variables in production. 
+    # Note : This Splunk can be different from ingestion.splunk.auth_token
+    auth_token: <splunk bearer token for inputs>
+
+    # Splunk App Name that contains the KVStore collections
     app: "ml_sidecar_app"
+
+    # The specific collection to write
     collection: "auth_clusters"
 ```
 
@@ -256,29 +378,29 @@ output:
 
 The ingestion module uses:
 - Splunk REST API
-- `/services/search/jobs/export`
-- `output_mode=json`
-- Streaming results line-by-line
-
-It extracts:
-- `_raw` JSON if present
-- falls back to `result` dict
+- /services/search/jobs/export
+- output_mode=json
+- Streaming results (line-by-line)
 
 The output is a list of dict events, each containing fields such as:
 - TimeCreated
 - user
-- src
-- dest
+- src, dest
 - signature_id
 - action
-- src_user
 - process
+- raw authentication metadata
 
 ---
 
 # 5. Features (core/features.py)
 
 For each event, a numerical feature vector is produced.
+
+Feature engineering combines:
+- Extracted values from raw logs
+- Computed behavioral indicators
+- Learned priors from historical behavior
 
 Final feature set used in modeling:
 
@@ -314,6 +436,16 @@ Final feature set used in modeling:
 | Anomaly layers               | final_anomaly_score            | computed  | Weighted anomaly score across 4 dimensions.                         |
 | Anomaly layers               | behavior_outlier               | computed  | 1 if final_anomaly_score >= 0.8 else 0.                             |
 |------------------------------|--------------------------------|-----------|---------------------------------------------------------------------|
+| Decision                     | behavior_outlier_user          | computed  | User percentile-based decision.                                     |
+| Decision                     | behavior_outlier_cluster       | computed  | Clusterpercentile-based decision.                                   |
+| Decision                     | behavior_outlier_global        | computed  | Global percentile-based decision.                                   |
+| Decision                     | behavior_outlier               | computed  | Final combined outlier decision.                                    |
+|------------------------------|--------------------------------|-----------|---------------------------------------------------------------------|
+
+
+
+
+
 ```
 
 ---
@@ -327,10 +459,11 @@ user → { mean_hour, std_hour }
 ```
 
 This is used in:
-- feature extraction (hour_z)
-- anomaly scoring (user_hour_score)
+- feature extraction
+- temporal anomaly scoring
+- per-user normalization
 
-These profiles are saved alongside the model meta.
+Profiles are stored inside the model metadata.
 
 ---
 
@@ -338,15 +471,16 @@ These profiles are saved alongside the model meta.
 
 Training consists of:
 
-1. Build user profile  
-2. Extract feature matrix  
-3. Scale with MinMaxScaler  
-4. Auto-K selection  
-5. Build cluster distribution  
-6. Save:
-   - model.pkl
-   - scaler.pkl
-   - meta.json
+Training follows a deterministic, multi-step process:
+1. Build user behavior profiles
+2. Extract numerical feature matrix
+3. Scale features using MinMaxScaler
+4. Perform Auto-K KMeans selection
+5. Compute historical cluster distribution
+6. Persist model artifacts:
+    - model.pkl
+    - scaler.pkl
+    - meta.json
 
 ## Auto-K Selection
 
@@ -355,65 +489,155 @@ For each:
 
 - Fit KMeans
 - Compute silhouette score
+- Reject collapsed solutions (all points → one cluster)
 - Select best K
 
-If clustering collapses (all points → 1 cluster), the candidate is skipped.
+If all candidates fail, a safe fallback K (default: 4) is used to ensure pipeline continuity.
 
 ---
 
-# 8. Prediction & Scoring
+# 8. Prediction & Anomaly Scoring
 
-Each event receives:
+Each event receives four anomaly components:
+1. outlier_score: centroid distance
+2. cluster_rarity:  user behavior deviation
+3. signature_rarity: cluster signature mismatch
+4. user_hour_score: temporal anomaly
 
-### 8.1 outlier_score
-Normalized centroid distance.
+### 8.1 `outlier_score`
+This is the base anomaly signal produced directly by the clustering model.
 
-### 8.2 cluster_rarity
+- Defined as the distance to the assigned KMeans centroid
+- Normalized to [0, 1]
+- Captures structural deviation in feature space
+
+### 8.2 `cluster_rarity`
+This score measures how unusual the assigned cluster is for a specific user.
+
 ```
 1 - freq(user, cluster) / total_user_events
 ```
 
-### 8.3 signature_rarity
+Interpretation:
+- Near 0 → user frequently appears in this cluster
+- Near 1 → cluster is rare or unseen for that user
+
+### 8.3. `signature_rarity`
+This score measures how well the event’s signature fits its cluster.
+
 ```
 1 - P(signature | cluster)
 ```
 
-### 8.4 user_hour_score
-Normalized Z-score:
+Where:
+- P(signature | cluster) is learned from historical data
+- Each cluster maintains its own signature distribution
+
+Interpretation:
+- Low value → signature is common in this cluster
+- High value → signature is unexpected for the cluster
+
+### 8.4. `user_hour_score`
+This score measures how well the event’s signature fits its cluster.
+
+Steps:
+1.	Build per-user temporal profile:
+
+    ```
+    user → { mean_hour, std_hour }
+    ```    
+
+2.  Compute normalized deviation:  
+
+    ```   
+    min( |hour - mean_hour| / std_hour , 1 )
+    ```
+
+Interpretation:
+- Near 0 → event occurred at a typical hour
+- Near 1 → event occurred at an unusual time
+
+### 8.5. Final Anomaly Score (Composite)
+The final anomaly score is a weighted combination of all four signals:
+
 ```
-min(|hour - mean| / std, 1)
+0.4 * outlier +
+0.3 * cluster_rarity +
+0.2 * signature_rarity +
+0.1 * user_hour_score
 ```
 
-### 8.5 Final Anomaly Score
-```
-0.4*outlier +
-0.3*cluster_rarity +
-0.2*signature_rarity +
-0.1*user_hour_score
-```
+Design rationale:
+- Structural deviation is dominant
+- User behavior deviation is strongly weighted
+- Contextual and temporal signals refine the decision
 
-threshold:
+The result is a continuous score in [0, 1], not a hard verdict.
+
+### 8.6. Adaptive Thresholding (User / Cluster / Global)
+Instead of a fixed threshold (e.g. 0.7), the Sidecar uses distribution-aware thresholds. Thresholds are computed using percentiles:
+
+`User Threshold`: 
+Each user has their own behavioral baseline. Instead of comparing raw anomaly scores directly, the pipeline:
+1.	Normalizes scores per user using z-score + sigmoid
+2.	Computes a user-specific threshold on the normalized scores
+
+`Cluster Threshold`: Captures cluster-specific variance (e.g. noisy VPN clusters vs stable service-account clusters). 
+
+`Global Threshold`: The global threshold represents rare behavior across the entire environment (System-Wide Rarity).
+
+`Combined Threshold`: Each event may be flagged by one or more threshold types:
+- behavior_outlier_user
+- behavior_outlier_cluster
+- behavior_outlier_global
+
+The final decision is configurable via settings.yaml:
 ```
-behavior_outlier = 1 if final_anomaly_score ≥ 0.7
+modeling:
+  # Decide final outlier flag based on mode  
+  outlier_mode: "combined"   # Options -> "user" | "cluster" | "global" | "combined"
+
+  # Threshold sources used when outlier_mode = combined
+  combined_logic: "and" # Options -> "and" | "or"
+  thresholds:
+    enable_user: true
+    enable_cluster: true
+    enable_global: false
 ```
 
 ---
 
-# 9. Drift Detection
+# 9. Drift Detection (core/model.py)
 
-Drift is evaluated using chi-square:
+User authentication behavior is not static. Seasonal changes, operational shifts, migrations, or security incidents can all cause distributional drift in authentication patterns.
 
+To keep the model aligned with current behavior, the Sidecar performs automatic drift detection using a Chi-Square test on cluster assignments.
+
+Drift Evaluation Logic
+1.	The trained model stores a historical cluster distribution:
 ```
-old_dist (from meta)
-new_dist (from current dataset)
+old_dist = meta["cluster_dist"]
+```
+
+2.	New incoming events are projected onto the existing model:
+```
+new_dist = distribution(new_cluster_labels)
+```
+
+3.	A Chi-Square test is applied:
+```
 p = chisquare(new_dist, expected=old_dist)
 ```
 
-Decision rule:
-- p < threshold → drift detected → retrain
-- else → keep existing model
+Decision Rule
+- p < drift_threshold → Drift detected
+- Model is retrained automatically using current data
+- p ≥ drift_threshold → No drift
+- Existing model is reused
 
-> Default threshold: 0.05
+> Default threshold: 0.05. This value is configurable via modeling.drift_threshold in `settings.yaml`.
+
+This approach ensures the model adapts to long-term behavioral changes without overreacting to short-term noise.
 
 ---
 
@@ -421,30 +645,56 @@ Decision rule:
 
 The pipeline produces 3 datasets:
 
-### 10.1 Cluster Profiles
+### 10.1 Cluster Profiles (`auth_cluster_profiles`)
 - cluster_id
 - event_count
 - user_count
 - private_ip_rate
 - signature_distribution
+- label
 
-### 10.2 User Profiles
+### 10.2. User Profiles (`auth_user_profiles`)
+Models long-term user behavior:
 - user
-- dominant_cluster
-- confidence
-- mean_hour
-- std_hour
+- dominant_cluster — most frequent behavioral cluster
+- confidence — strength of association with dominant cluster
+- mean_hour — average authentication hour
+- std_hour — temporal variability
 
-### 10.3 Event Records
-Minimal enriched records for dashboards:
-- event metadata
+User profiles are used both for:
+- temporal anomaly scoring
+- per-user adaptive thresholding
+
+### 10.3. Event Records (`auth_events`)
+Compact, enriched event-level records used directly by dashboards:
+- Event metadata (TimeCreated, user, src, dest, signature)
 - cluster_id
-- anomaly scores
-- `behavior_outlier`
+- anomaly components:
+- outlier_score
+- cluster_rarity
+- signature_rarity
+- user_hour_score
+- final_anomaly_score
+- outlier decisions:
+  - behavior_outlier
+  - behavior_outlier_user
+  - behavior_outlier_cluster
+  - behavior_outlier_global
+
+Each record represents one authentication event with full behavioral context.
+
+### 10.4. Outlier Event Records (`auth_outlier_events`)
+Optional collection containing only events flagged as outliers. Export is controlled via:
+```
+modeling:
+  export_outlier_events: true
+```
+Each record represents one authentication event with full behavioral context.
 
 ---
 
 # 11. Export to Splunk KVStore (core/kvstore.py)
+All model outputs are written to Splunk KVStore, not indexes.
 
 The exporter supports:
 
@@ -463,20 +713,28 @@ POST /storage/collections/data/<collection>/batch_save
 # 12. Pipeline Orchestration (core/pipeline.py)
 
 The main executor performs:
+1.	Load configuration (`settings.yaml`)
+2.	Ingest authentication events from Splunk
+3.	Train or load model artifacts
+4.	Perform drift detection
+5.	Run inference and anomaly scoring
+6.	Apply adaptive thresholds:
+    - user-based
+    - cluster-based
+    - global
+7.	Resolve final outlier decision (user / cluster / global / combined)
+8.	Build behavioral profiles
+9.	Export results to KVStore
 
-1. Load settings  
-2. Ingest events  
-3. Train or load model  
-4. Drift detection  
-5. Prediction  
-6. Thresholding  
-7. Build profiles  
-8. Write to KVStore  
-
-Threshold is dynamic:
+Thresholds are distribution-aware, not static:
 ```
 threshold = quantile(scores, outlier_percentile)
 ```
+
+Final decision logic is fully configurable via:
+- outlier_mode
+- combined_logic
+- enabled threshold sources (user / cluster / global)
 
 ---
 
@@ -486,42 +744,53 @@ threshold = quantile(scores, outlier_percentile)
 python run_auto.py
 ```
 
-This runs the full chain:
-- ingest
-- train/load
-- detect drift
-- score
-- export
+This triggers:
+- ingestion
+- training or loading
+- drift detection
+- scoring
+- thresholding
+- profile generation
+- KVStore export
+
+Designed to run via:
+- cron
+- Splunk modular input
+- external scheduler
 
 ---
 
 # 14. Extensibility & Design Notes
+The ML Sidecar is designed with production SOC environments in mind:
 
-Designed for production:
-- modular architecture
-- clean boundaries
-- streaming ingestion
-- multi-collection output
-- deterministic scoring
-- retraining logic built-in
+Key Design Principles
+- Modular architecture
+- Clear separation of concerns
+- Streaming ingestion
+- Deterministic scoring
+- Config-driven behavior
+- Multi-threshold decision logic
+- No dependency on indexed ML results
 
-Intended future improvements:
-- support for additional ML algorithms
-- incremental update mode
-- batch inference without full export
-- pluggable feature sets per sourcetype
-- removing dependency on large JSON outputs
+Planned / Possible Extensions
+- Additional ML algorithms (Isolation Forest, HDBSCAN, GMM)
+- Incremental or online learning
+- Per-sourcetype feature sets
+- Sliding window inference
+- Risk scoring aggregation
+- Cross-user peer group modeling
 
 ---
 
 # 15. Summary
 
-The ML Sidecar engine is a complete, modular behavioral analytics stack for Splunk:
-- feature engineering
-- clustering
-- anomaly scoring
-- drift detection
-- KVStore export
-- dashboard-ready schemas
+The ML Sidecar is a complete behavioral analytics engine for Splunk:
+- Feature engineering
+- Adaptive clustering
+- Multi-layer anomaly scoring
+- Drift detection
+- Flexible thresholding (user / cluster / global)
+- KVStore-native output
+- Dashboard-ready schemas
 
-It allows Splunk dashboards to operate on always-fresh behavioral insights without modifying any indexed data.
+It enables behavior-first security analytics without modifying indexed data, while remaining transparent, explainable, and SOC-friendly.

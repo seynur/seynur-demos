@@ -24,7 +24,7 @@ import re
 import ipaddress
 import numpy as np
 
-from core.utils import parse_windows_time
+from .utils import parse_windows_time
 
 
 # ============================================================================
@@ -263,6 +263,9 @@ def build_event_records(events: List[Dict]) -> List[Dict]:
 
             # binary classification: above threshold?
             "behavior_outlier": int(e.get("behavior_outlier", 0)),
+            "behavior_outlier_user": int(e.get("behavior_outlier_user", 0)),
+            "behavior_outlier_cluster": int(e.get("behavior_outlier_cluster", 0)),
+            "behavior_outlier_global": int(e.get("behavior_outlier_global", 0))
         }
 
         records.append(rec)
@@ -275,14 +278,13 @@ def build_event_records(events: List[Dict]) -> List[Dict]:
 
 def build_outlier_event_records(events: List[Dict]) -> List[Dict]:
     """
-    Build minimal-enriched event records for KVStore.
+    Build minimal-enriched outlier event records for KVStore.
 
     These entries are used directly by dashboards and should remain compact.
 
     Output fields include:
         • metadata fields (TimeCreated, user, src, dest, etc.)
         • model outputs (cluster_id, rarity scores, anomaly score)
-        • behavior_outlier flag
 
     Returns:
         List[dict] — one record per event.
@@ -317,6 +319,9 @@ def build_outlier_event_records(events: List[Dict]) -> List[Dict]:
 
                 # binary classification: above threshold?
                 "behavior_outlier": int(e.get("behavior_outlier", 0)),
+                "behavior_outlier_user": int(e.get("behavior_outlier_user", 0)),
+                "behavior_outlier_cluster": int(e.get("behavior_outlier_cluster", 0)),
+                "behavior_outlier_global": int(e.get("behavior_outlier_global", 0))
             }
 
             records.append(rec)
