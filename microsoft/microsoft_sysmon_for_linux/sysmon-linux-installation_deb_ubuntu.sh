@@ -153,122 +153,92 @@ echo
 run_cmd "Creating Sysmon config directory" mkdir -p /opt/sysmon
 
 cat > /opt/sysmon/config.xml <<'EOF'
-<Sysmon schemaversion="4.81">
+<Sysmon schemaversion="4.90">
   <EventFiltering>
 
-    <!-- Event ID 1 == ProcessCreate -->
-    <RuleGroup name="ProcessCreate" groupRelation="or">
+    <!-- ========================= -->
+    <!-- Process Creation (EventID 1) -->
+    <!-- ========================= -->
+    <RuleGroup name="process_create" groupRelation="or">
       <ProcessCreate onmatch="include">
 
-        <Rule name="TechniqueID=T1021.004,TechniqueName=Remote Services: SSH" groupRelation="and">
-          <Image condition="end with">ssh</Image>
-          <CommandLine condition="contains">ConnectTimeout=</CommandLine>
-          <CommandLine condition="contains">BatchMode=yes</CommandLine>
-          <CommandLine condition="contains">StrictHostKeyChecking=no</CommandLine>
-          <CommandLine condition="contains any">wget;curl</CommandLine>
-        </Rule>
+        <!-- Shell usage -->
+        <Image condition="end with">/bin/bash</Image>
+        <Image condition="end with">/bin/sh</Image>
+        <Image condition="end with">/bin/dash</Image>
 
-        <Rule name="TechniqueID=T1027.001,TechniqueName=Obfuscated Files or Information: Binary Padding" groupRelation="and">
-          <Image condition="is">/bin/dd</Image>
-          <CommandLine condition="contains all">dd;if=</CommandLine>
-        </Rule>
+        <!-- Common tool transfer -->
+        <Image condition="end with">curl</Image>
+        <Image condition="end with">wget</Image>
+        <Image condition="end with">ftpget</Image>
+        <Image condition="end with">tftp</Image>
 
-        <Rule name="TechniqueID=T1033,TechniqueName=System Owner/User Discovery" groupRelation="or">
-          <CommandLine condition="contains">/var/run/utmp</CommandLine>
-          <CommandLine condition="contains">/var/log/btmp</CommandLine>
-          <CommandLine condition="contains">/var/log/wtmp</CommandLine>
-        </Rule>
+        <!-- Suspicious temp execution -->
+        <Image condition="begin with">/tmp/</Image>
+        <Image condition="begin with">/dev/shm/</Image>
 
-        <Rule name="TechniqueID=T1053.003,TechniqueName=Scheduled Task/Job: Cron" groupRelation="or">
-          <Image condition="end with">crontab</Image>
-        </Rule>
+        <!-- Account manipulation -->
+        <Image condition="end with">useradd</Image>
+        <Image condition="end with">adduser</Image>
 
-        <Rule name="TechniqueID=T1059.004,TechniqueName=Command and Scripting Interpreter: Unix Shell" groupRelation="or">
-          <Image condition="end with">/bin/bash</Image>
-          <Image condition="end with">/bin/dash</Image>
-          <Image condition="end with">/bin/sh</Image>
-        </Rule>
-
-        <Rule name="TechniqueID=T1070.006,TechniqueName=Indicator Removal on Host: Timestomp" groupRelation="and">
-          <Image condition="is">/bin/touch</Image>
-          <CommandLine condition="contains any">-r;--reference;-t;--time</CommandLine>
-        </Rule>
-
-        <Rule name="TechniqueID=T1087.001,TechniqueName=Account Discovery: Local Account" groupRelation="or">
-          <CommandLine condition="contains">/etc/passwd</CommandLine>
-          <CommandLine condition="contains">/etc/sudoers</CommandLine>
-        </Rule>
-
-        <Rule name="TechniqueID=T1105,TechniqueName=Ingress Tool Transfer" groupRelation="or">
-          <Image condition="end with">wget</Image>
-          <Image condition="end with">curl</Image>
-          <Image condition="end with">ftpget</Image>
-          <Image condition="end with">tftp</Image>
-          <Image condition="end with">lwp-download</Image>
-        </Rule>
-
-        <Rule name="TechniqueID=T1136.001,TechniqueName=Create Account: Local Account" groupRelation="or">
-          <Image condition="end with">useradd</Image>
-          <Image condition="end with">adduser</Image>
-        </Rule>
-
-        <Rule name="TechniqueID=T1485,TechniqueName=Data Destruction" groupRelation="and">
-          <Image condition="is">/bin/dd</Image>
-          <CommandLine condition="contains all">dd;of=;if=</CommandLine>
-          <CommandLine condition="contains any">if=/dev/zero;if=/dev/null</CommandLine>
-        </Rule>
+        <!-- Permission changes -->
+        <Image condition="end with">chmod</Image>
+        <Image condition="end with">chown</Image>
 
       </ProcessCreate>
     </RuleGroup>
 
-    <!-- Event ID 3 == NetworkConnect -->
-    <RuleGroup name="NetworkConnect" groupRelation="or">
+    <!-- ========================= -->
+    <!-- Network Connections (EventID 3) -->
+    <!-- ========================= -->
+    <RuleGroup name="network_connect" groupRelation="or">
       <NetworkConnect onmatch="include">
-        <Rule name="TechniqueID=T1105,TechniqueName=Ingress Tool Transfer" groupRelation="or">
-          <Image condition="end with">wget</Image>
-          <Image condition="end with">curl</Image>
-          <Image condition="end with">ftpget</Image>
-          <Image condition="end with">tftp</Image>
-          <Image condition="end with">lwp-download</Image>
-        </Rule>
+        <Image condition="end with">curl</Image>
+        <Image condition="end with">wget</Image>
+        <Image condition="end with">ssh</Image>
       </NetworkConnect>
     </RuleGroup>
 
-    <!-- Event ID 9 == RawAccessRead -->
-    <RuleGroup name="RawAccessRead" groupRelation="or">
+    <!-- ========================= -->
+    <!-- Process Termination (EventID 5) -->
+    <!-- ========================= -->
+    <RuleGroup name="process_terminate" groupRelation="or">
+      <ProcessTerminate onmatch="include" />
+    </RuleGroup>
+
+    <!-- ========================= -->
+    <!-- Raw Disk Access (EventID 9) -->
+    <!-- ========================= -->
+    <RuleGroup name="raw_access" groupRelation="or">
       <RawAccessRead onmatch="include" />
     </RuleGroup>
 
-    <!-- Event ID 11 == FileCreate -->
-    <RuleGroup name="FileCreate" groupRelation="or">
+    <!-- ========================= -->
+    <!-- File Creation (EventID 11) -->
+    <!-- ========================= -->
+    <RuleGroup name="file_create" groupRelation="or">
       <FileCreate onmatch="include">
 
-        <Rule name="TechniqueID=T1037,TechniqueName=Boot or Logon Initialization Scripts" groupRelation="or">
-          <TargetFilename condition="begin with">/etc/init/</TargetFilename>
-          <TargetFilename condition="begin with">/etc/init.d/</TargetFilename>
-          <TargetFilename condition="begin with">/etc/rc.d/</TargetFilename>
-        </Rule>
+        <!-- Temp directory activity -->
+        <TargetFilename condition="begin with">/tmp/</TargetFilename>
 
-        <Rule name="TechniqueID=T1053.003,TechniqueName=Scheduled Task/Job: Cron" groupRelation="or">
-          <TargetFilename condition="is">/etc/cron.allow</TargetFilename>
-          <TargetFilename condition="is">/etc/cron.deny</TargetFilename>
-          <TargetFilename condition="is">/etc/crontab</TargetFilename>
-          <TargetFilename condition="begin with">/etc/cron.d/</TargetFilename>
-          <TargetFilename condition="begin with">/etc/cron.daily/</TargetFilename>
-          <TargetFilename condition="begin with">/etc/cron.hourly/</TargetFilename>
-          <TargetFilename condition="begin with">/etc/cron.monthly/</TargetFilename>
-          <TargetFilename condition="begin with">/etc/cron.weekly/</TargetFilename>
-          <TargetFilename condition="begin with">/var/spool/cron/crontabs/</TargetFilename>
-        </Rule>
+        <!-- SSH persistence -->
+        <TargetFilename condition="end with">authorized_keys</TargetFilename>
 
-        <Rule name="TechniqueID=T1543.002,TechniqueName=Create or Modify System Process: Systemd Service" groupRelation="or">
-          <TargetFilename condition="begin with">/etc/systemd/system</TargetFilename>
-          <TargetFilename condition="begin with">/usr/lib/systemd/system</TargetFilename>
-          <TargetFilename condition="begin with">/run/systemd/system/</TargetFilename>
-          <TargetFilename condition="contains">/systemd/user/</TargetFilename>
-        </Rule>
+        <!-- Cron persistence -->
+        <TargetFilename condition="begin with">/etc/cron</TargetFilename>
+
+        <!-- Systemd persistence -->
+        <TargetFilename condition="begin with">/etc/systemd/system</TargetFilename>
 
       </FileCreate>
+    </RuleGroup>
+
+    <!-- ========================= -->
+    <!-- File Deletion (EventID 23) -->
+    <!-- ========================= -->
+    <RuleGroup name="file_delete" groupRelation="or">
+      <FileDelete onmatch="include" />
     </RuleGroup>
 
   </EventFiltering>
