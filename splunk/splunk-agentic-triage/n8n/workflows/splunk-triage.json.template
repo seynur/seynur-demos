@@ -1,0 +1,468 @@
+{
+  "name": "Splunk Agentic Triage",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "splunk",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-splunk",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "splunk-triage"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "norm-event-id",
+              "name": "event_id",
+              "value": "={{ $json.body?.result?.event_id ?? $json.result?.event_id ?? $json.body?.event_id ?? $json.event_id ?? $json.body?.body?.event_id ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "norm-severity",
+              "name": "severity",
+              "value": "={{ $json.body?.result?.severity ?? $json.body?.result?.urgency ?? $json.result?.severity ?? $json.result?.urgency ?? $json.body?.severity ?? $json.body?.urgency ?? $json.severity ?? $json.urgency ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "norm-src-ip",
+              "name": "src_ip",
+              "value": "={{ $json.body?.result?.src_ip ?? $json.result?.src_ip ?? $json.body?.src_ip ?? $json.src_ip ?? '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-payload",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        380,
+        300
+      ],
+      "notes": "Supports flat test POSTs and Splunk built-in webhook envelope (result.*)."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Event ID: {{ $json.event_id }}\nSeverity: {{ $json.severity }}\nSource IP: {{ $json.src_ip }}\n\nPlease investigate this event and produce a triage report.",
+        "options": {
+          "systemMessage": "You are an expert security analyst assistant integrated with Splunk via MCP tools.\n\nWhen you receive a security event, investigate it with the available MCP tools, then produce a structured triage report.\n\n## Available MCP Tools (use these exact names)\n\n- splunk_run_query(query, earliest_time, latest_time, row_limit): Run SPL. Primary investigation tool.\n- splunk_get_metadata(type, index, earliest_time, latest_time): Host/source/sourcetype metadata.\n- splunk_get_indexes / splunk_get_index_info: Discover where data lives.\n- splunk_get_info / splunk_get_user_info: Instance and auth context.\n- splunk_get_knowledge_objects / splunk_run_saved_search: Saved searches and knowledge objects.\n- splunk_get_kv_store_collections / splunk_get_user_list: Supporting lookups when needed.\n\n## Investigation Process\n\n0. You MUST invoke tools through the function-calling interface on your first turn. Never reply with an empty message. Never only describe a tool call in prose.\n1. Call splunk_run_query to look up the event (by event_id if provided) and related notable/risk context. Example SPL ideas:\n   - `| search event_id=\"<id>\" OR event_id=\"<id>\"`\n   - `| from datamodel:Risk.All_Risk | search risk_object=\"<ip_or_asset>\" | head 20`\n   - `index=* src=\"<src_ip>\" OR src_ip=\"<src_ip>\" earliest=-24h | head 50`\n2. If needed, call splunk_get_metadata or another targeted splunk_run_query for the source IP.\n3. Stop calling tools once you have enough evidence for a triage report.\n4. If a tool errors or returns no rows, note that and continue with what you have.\n\n## Output Format\n\nAlways end with:\n\n---\nTRIAGE REPORT\nEvent ID: <event_id>\nSeverity: <severity>\nRoot Cause: <one sentence summary>\nIOCs:\n  - <indicator 1>\n  - <indicator 2>\nRecommended Actions:\n  - <action 1>\n  - <action 2>\n---\n\n## Rules\n\n- Prefer tool evidence over assumptions.\n- Keep the triage report concise and actionable.\n- Do not dump raw tool JSON into the final report.\n",
+          "maxIterations": 6,
+          "returnIntermediateSteps": true
+        }
+      },
+      "id": "ai-agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        580,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "returnIntermediateSteps enabled for MCP tool diagnostics. Continues on error so diagnostics still return."
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:7b",
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 1024,
+          "timeout": 600000,
+          "maxRetries": 1
+        }
+      },
+      "id": "ollama-model",
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.1,
+      "position": [
+        420,
+        540
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "ollama-openai",
+          "name": "Ollama OpenAI Compat"
+        }
+      },
+      "notes": "Uses Ollama OpenAI-compatible /v1 API on the Mac host (OLLAMA_BASE_URL=http://host.docker.internal:11434). Native lmChatOllama streams tool calls and often yields empty output/intermediateSteps with qwen2.5. Timeout 600s for multi-step MCP agent runs. Faster alternative model: qwen2.5:3b."
+    },
+    {
+      "parameters": {
+        "endpointUrl": "__SPLUNK_MCP_ENDPOINT__",
+        "serverTransport": "httpStreamable",
+        "authentication": "bearerAuth",
+        "include": "all",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "mcp-client",
+      "name": "Splunk MCP Client",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        540
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "splunk-mcp-bearer",
+          "name": "Splunk MCP Bearer Auth"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Splunk MCP Server 1.2: streamable HTTP + encrypted Bearer token. onError continues so agent/diagnostics can report failures."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Debug: dump full AI Agent output so we can see intermediateSteps / tool wiring.\nconst item = $input.item.json;\n\nfunction safeStringify(value, space = 2) {\n  const seen = new WeakSet();\n  try {\n    return JSON.stringify(\n      value,\n      (key, val) => {\n        if (typeof val === 'object' && val !== null) {\n          if (seen.has(val)) return '[Circular]';\n          seen.add(val);\n        }\n        if (typeof val === 'bigint') return val.toString();\n        return val;\n      },\n      space,\n    );\n  } catch (e) {\n    return `<<stringify failed: ${e.message}>>`;\n  }\n}\n\nconst keys = Object.keys(item || {});\nconst intermediateSteps =\n  item.intermediateSteps ??\n  item.intermediate_steps ??\n  item.steps ??\n  null;\n\nconst debug = {\n  timestamp: new Date().toISOString(),\n  agent_top_level_keys: keys,\n  has_output: typeof item.output === 'string' || item.output != null,\n  has_text: typeof item.text === 'string',\n  has_intermediateSteps: Array.isArray(item.intermediateSteps),\n  has_intermediate_steps: Array.isArray(item.intermediate_steps),\n  has_steps: Array.isArray(item.steps),\n  intermediateSteps_type: intermediateSteps == null ? 'null' : Array.isArray(intermediateSteps) ? 'array' : typeof intermediateSteps,\n  intermediateSteps_length: Array.isArray(intermediateSteps) ? intermediateSteps.length : null,\n  intermediateSteps_full: intermediateSteps,\n  // Full agent item for deep inspection (may be large)\n  agent_item_full: item,\n};\n\nconst debugJson = safeStringify(debug);\n\nconsole.log('========== [splunk-triage] AI Agent DEBUG START ==========');\nconsole.log('[splunk-triage] agent top-level keys:', keys.join(', '));\nconsole.log('[splunk-triage] intermediateSteps present?', Array.isArray(intermediateSteps), 'length=', Array.isArray(intermediateSteps) ? intermediateSteps.length : 'n/a');\nconsole.log('[splunk-triage] full debug payload:\\n' + debugJson);\nconsole.log('========== [splunk-triage] AI Agent DEBUG END ==========');\n\n// Pass through original agent fields + debug envelope for the webhook response chain\nreturn {\n  json: {\n    ...item,\n    _debug: {\n      agent_top_level_keys: keys,\n      intermediateSteps_type: debug.intermediateSteps_type,\n      intermediateSteps_length: debug.intermediateSteps_length,\n      intermediateSteps_full: intermediateSteps,\n      agent_item_full: item,\n      logged_at: debug.timestamp,\n    },\n  },\n};\n"
+      },
+      "id": "debug-agent-output",
+      "name": "Debug Agent Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ],
+      "notes": "Logs full AI Agent JSON (keys + intermediateSteps) to n8n/docker logs and attaches _debug on the item."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Diagnose AI Agent + MCP tool usage and parse triage fields.\nconst item = $input.item.json;\nconst upstreamDebug = item._debug || null;\n// Prefer unwrapped agent fields if Debug node spread them\nconst agentItem = upstreamDebug?.agent_item_full || item;\nconst normalized = $('Normalize Payload').item.json;\n\nconst output =\n  typeof agentItem.output === 'string'\n    ? agentItem.output\n    : typeof agentItem.text === 'string'\n      ? agentItem.text\n      : JSON.stringify(agentItem.output ?? agentItem, null, 2);\n\n// Collect intermediate steps from common n8n / LangChain shapes\nlet intermediateSteps = [];\nif (Array.isArray(agentItem.intermediateSteps)) {\n  intermediateSteps = agentItem.intermediateSteps;\n} else if (Array.isArray(agentItem.intermediate_steps)) {\n  intermediateSteps = agentItem.intermediate_steps;\n} else if (Array.isArray(agentItem.steps)) {\n  intermediateSteps = agentItem.steps;\n} else if (Array.isArray(upstreamDebug?.intermediateSteps_full)) {\n  intermediateSteps = upstreamDebug.intermediateSteps_full;\n}\n\nconst toolCalls = [];\nconst toolErrors = [];\n\nfunction asText(value) {\n  if (value == null) return '';\n  if (typeof value === 'string') return value;\n  try {\n    return JSON.stringify(value);\n  } catch (e) {\n    return String(value);\n  }\n}\n\nfunction isHardToolFailure(obsText) {\n  const lower = obsText.toLowerCase();\n  // Only treat clear transport/auth failures as hard errors.\n  // Do NOT match the substring \"error\" alone (false positives in Splunk data).\n  return (\n    lower.includes('could not connect') ||\n    lower.includes('econnrefused') ||\n    lower.includes('enotfound') ||\n    lower.includes('unauthorized') ||\n    lower.includes('forbidden') ||\n    lower.includes('self-signed') ||\n    lower.includes('certificate') ||\n    lower.includes('timed out') ||\n    lower.includes('timeout exceeded') ||\n    lower.includes('mcp error') ||\n    lower.includes('tool failed') ||\n    /^error:/i.test(obsText.trim())\n  );\n}\n\nfor (const step of intermediateSteps) {\n  let action = null;\n  let observation = '';\n\n  // LangChain sometimes stores steps as [action, observation]\n  if (Array.isArray(step) && step.length >= 2) {\n    action = step[0] || {};\n    observation = step[1];\n  } else if (step && typeof step === 'object') {\n    action = step.action || step.toolCall || step;\n    observation = step.observation ?? step.result ?? step.output ?? '';\n  } else {\n    continue;\n  }\n\n  const toolName =\n    action.tool ||\n    action.toolName ||\n    action.name ||\n    action.tool_name ||\n    (action.toolCallId || action.id ? 'unknown_tool' : null);\n\n  const toolInput =\n    action.toolInput ?? action.input ?? action.args ?? action.parameters ?? null;\n\n  const obsText = asText(observation);\n\n  if (toolName) {\n    toolCalls.push({\n      tool: toolName,\n      input: toolInput,\n      observation_preview: obsText.slice(0, 500),\n    });\n  }\n\n  if (toolName && isHardToolFailure(obsText)) {\n    toolErrors.push({\n      tool: toolName,\n      detail: obsText.slice(0, 800) || 'empty observation',\n    });\n  }\n}\n\nconst toolNamesInText =\n  /(?:splunk_)?(?:get_notable_events|search_related_logs|get_risk_score)/i.test(\n    output,\n  );\nconst hasTriageBlock = /TRIAGE\\s*REPORT/i.test(output);\nconst looksLikeRawToolCalls =\n  toolCalls.length === 0 &&\n  ( /Action\\s*:/i.test(output) ||\n    /tool_call/i.test(output) ||\n    (toolNamesInText && !hasTriageBlock) );\n\nfunction extract(sectionRegex) {\n  const m = output.match(sectionRegex);\n  return m && m[1] ? m[1].trim() : '';\n}\n\nconst rootCause = extract(/Root\\s*Cause\\s*:\\s*(.+?)(?:\\n|$)/i);\nconst iocs = extract(/IOCs?\\s*:\\s*([\\s\\S]*?)(?=Recommended\\s+Actions\\s*:|$)/i);\nconst recommendedActions = extract(\n  /Recommended\\s+Actions\\s*:\\s*([\\s\\S]*?)(?=\\n---|\\n*$)/i,\n);\n\nlet mcpStatus = 'unknown';\nconst outputIsEmpty = !String(output || '').trim();\nif (toolCalls.length > 0 && toolErrors.length === 0) {\n  // Tools were actually invoked via the MCP client and did not hard-fail.\n  mcpStatus = 'tools_called_ok';\n} else if (toolCalls.length > 0 && toolErrors.length > 0) {\n  mcpStatus = 'tools_called_with_errors';\n} else if (looksLikeRawToolCalls) {\n  mcpStatus = 'tools_requested_but_not_executed';\n} else if (outputIsEmpty && intermediateSteps.length === 0) {\n  // Model returned empty content. Common when native Ollama streaming drops tool_calls.\n  mcpStatus = 'empty_agent_output';\n} else if (toolCalls.length === 0) {\n  mcpStatus = 'no_tool_calls';\n}\n\nconst parseOk = Boolean(rootCause || iocs || recommendedActions || hasTriageBlock);\n\n// Route to Triage Report when tools ran, or when the model returned a parseable report.\nconst routeOk =\n  mcpStatus === 'tools_called_ok' ||\n  (parseOk && !outputIsEmpty);\n\nconst diagnostics = {\n  mcp_status: mcpStatus,\n  route_ok: routeOk,\n  tool_call_count: toolCalls.length,\n  tool_calls: toolCalls,\n  tool_errors: toolErrors,\n  has_triage_block: hasTriageBlock,\n  parse_ok: parseOk,\n  agent_error: agentItem.error || agentItem.message || null,\n  debug_attached: Boolean(upstreamDebug),\n  agent_top_level_keys: upstreamDebug?.agent_top_level_keys || Object.keys(agentItem || {}),\n  intermediate_steps_present: intermediateSteps.length > 0,\n  intermediate_steps_count: intermediateSteps.length,\n  output_length: output.length,\n  hint:\n    mcpStatus === 'tools_called_ok'\n      ? parseOk\n        ? 'MCP tools invoked successfully and triage fields were parsed.'\n        : 'MCP tools invoked successfully, but the model did not emit a parseable TRIAGE REPORT block. See raw_report.'\n      : mcpStatus === 'tools_requested_but_not_executed'\n        ? 'Model printed tool intents as text; intermediateSteps is empty so MCP tools were not executed.'\n        : mcpStatus === 'empty_agent_output'\n          ? 'Agent returned empty output and no intermediateSteps. Check Ollama load and OpenAI-compat /v1 chat model credentials.'\n          : mcpStatus === 'no_tool_calls' && parseOk\n            ? 'No tool calls recorded, but a parseable TRIAGE REPORT was found in agent output.'\n            : mcpStatus === 'no_tool_calls'\n              ? 'Agent finished without tool calls \u2014 check MCP Client binding and model tool support.'\n              : mcpStatus === 'tools_called_with_errors'\n                ? 'Tools ran but returned transport/auth failures \u2014 inspect tool_errors, endpoint, token, TLS.'\n                : 'Unable to determine MCP tool status.',\n};\n\nconsole.log('[splunk-triage] diagnostics', JSON.stringify(diagnostics, null, 2));\nif (upstreamDebug) {\n  console.log('[splunk-triage] upstream _debug.intermediateSteps_full:', JSON.stringify(upstreamDebug.intermediateSteps_full, null, 2));\n}\n\nreturn {\n  json: {\n    event_id: normalized.event_id || '',\n    severity: normalized.severity || '',\n    src_ip: normalized.src_ip || '',\n    root_cause: rootCause,\n    iocs: iocs,\n    recommended_actions: recommendedActions,\n    raw_report: output,\n    // Top-level flag for reliable IF-node matching (avoid nested boolean quirks)\n    route_ok: routeOk,\n    mcp_status: mcpStatus,\n    diagnostics,\n    _debug: upstreamDebug,\n  },\n};\n"
+      },
+      "id": "diagnose-mcp",
+      "name": "Diagnose MCP & Parse Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "notes": "Logs MCP tool calls/errors and parses triage fields. Check diagnostics in the webhook response and n8n execution log."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "mcp-ok",
+              "leftValue": "={{ $json.route_ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-mcp-ok",
+      "name": "MCP OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ok-event-id",
+              "name": "event_id",
+              "value": "={{ $json.event_id }}",
+              "type": "string"
+            },
+            {
+              "id": "ok-severity",
+              "name": "severity",
+              "value": "={{ $json.severity }}",
+              "type": "string"
+            },
+            {
+              "id": "ok-root-cause",
+              "name": "root_cause",
+              "value": "={{ $json.root_cause }}",
+              "type": "string"
+            },
+            {
+              "id": "ok-iocs",
+              "name": "iocs",
+              "value": "={{ $json.iocs }}",
+              "type": "string"
+            },
+            {
+              "id": "ok-actions",
+              "name": "recommended_actions",
+              "value": "={{ $json.recommended_actions }}",
+              "type": "string"
+            },
+            {
+              "id": "ok-raw",
+              "name": "raw_report",
+              "value": "={{ $json.raw_report }}",
+              "type": "string"
+            },
+            {
+              "id": "ok-diag",
+              "name": "diagnostics",
+              "value": "={{ $json.diagnostics }}",
+              "type": "object"
+            },
+            {
+              "id": "ok-status",
+              "name": "status",
+              "value": "ok",
+              "type": "string"
+            },
+            {
+              "id": "dbg-output-ok",
+              "name": "_debug",
+              "value": "={{ $json._debug }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "output-ok",
+      "name": "Triage Report",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "err-status",
+              "name": "status",
+              "value": "mcp_or_parse_issue",
+              "type": "string"
+            },
+            {
+              "id": "err-event-id",
+              "name": "event_id",
+              "value": "={{ $json.event_id }}",
+              "type": "string"
+            },
+            {
+              "id": "err-severity",
+              "name": "severity",
+              "value": "={{ $json.severity }}",
+              "type": "string"
+            },
+            {
+              "id": "err-src",
+              "name": "src_ip",
+              "value": "={{ $json.src_ip }}",
+              "type": "string"
+            },
+            {
+              "id": "err-root",
+              "name": "root_cause",
+              "value": "={{ $json.root_cause }}",
+              "type": "string"
+            },
+            {
+              "id": "err-iocs",
+              "name": "iocs",
+              "value": "={{ $json.iocs }}",
+              "type": "string"
+            },
+            {
+              "id": "err-actions",
+              "name": "recommended_actions",
+              "value": "={{ $json.recommended_actions }}",
+              "type": "string"
+            },
+            {
+              "id": "err-raw",
+              "name": "raw_report",
+              "value": "={{ $json.raw_report }}",
+              "type": "string"
+            },
+            {
+              "id": "err-diag",
+              "name": "diagnostics",
+              "value": "={{ $json.diagnostics }}",
+              "type": "object"
+            },
+            {
+              "id": "err-msg",
+              "name": "error",
+              "value": "={{ $json.diagnostics.hint }}",
+              "type": "string"
+            },
+            {
+              "id": "dbg-output-error",
+              "name": "_debug",
+              "value": "={{ $json._debug }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "output-error",
+      "name": "Diagnostic Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1340,
+        420
+      ],
+      "notes": "Returned when MCP tools were missing, errored, or triage fields could not be parsed."
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Splunk MCP Client": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Debug Agent Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diagnose MCP & Parse Report": {
+      "main": [
+        [
+          {
+            "node": "MCP OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP OK?": {
+      "main": [
+        [
+          {
+            "node": "Triage Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Diagnostic Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Debug Agent Output": {
+      "main": [
+        [
+          {
+            "node": "Diagnose MCP & Parse Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "splunk-agentic-triage"
+  },
+  "id": "splunk-triage",
+  "tags": [
+    {
+      "name": "security",
+      "id": "tag-security"
+    },
+    {
+      "name": "splunk",
+      "id": "tag-splunk"
+    }
+  ]
+}

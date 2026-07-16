@@ -1,0 +1,24 @@
+# Environment variables — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Generated workflow — rebuilt from template on container start
+n8n/workflows/splunk-triage.json
+
+# Ephemeral credential export (entrypoint writes to /tmp in container; ignore if copied locally)
+**/splunk-triage-credentials.json
+
+# Runtime data (Docker named volumes or local bind mounts)
+n8n_data/
+ollama_data/
+
+# Internal working files
+specs/
+blog/
+
+# Draw.io editor backups (e.g. .$name.drawio.bkp)
+*.drawio.bkp
+
+# macOS
+.DS_Store

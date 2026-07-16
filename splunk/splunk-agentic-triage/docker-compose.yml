@@ -1,0 +1,42 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - SPLUNK_MCP_ENDPOINT=${SPLUNK_MCP_ENDPOINT}
+      - SPLUNK_TOKEN=${SPLUNK_TOKEN}
+      # Ollama runs natively on the Mac host; n8n reaches it via Docker Desktop DNS
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Required so expressions can read $env.* if used; default is blocked on recent n8n
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Allow MCP Client HTTPS to Splunk when using a self-signed certificate (dev/non-prod only)
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+      # Runtime fallback for credential field defaults
+      - 'CREDENTIALS_OVERWRITE_DATA={"ollamaApi":{"baseUrl":"${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"},"openAiApi":{"apiKey":"ollama","url":"${OLLAMA_BASE_URL:-http://host.docker.internal:11434}/v1"},"httpBearerAuth":{"token":"${SPLUNK_TOKEN}"}}'
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows
+      - ./n8n/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command: ["start"]
+    restart: unless-stopped
+    # n8n listens before mounting /webhook/*; wait until routes answer JSON.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:5678/webhook/__health__',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(async r=>{const t=await r.text(); process.exit(t.includes('not registered')&&!t.includes('Cannot POST')?0:1)}).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  n8n_data:
